@@ -1,5 +1,5 @@
 name:                Kalman
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            A slightly extended Kalman filter
 homepage:            https://github.com/idontgetoutmuch/Kalman
 license:             BSD3
