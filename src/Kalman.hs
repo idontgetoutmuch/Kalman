@@ -18,33 +18,19 @@ import GHC.TypeLits
 import Numeric.LinearAlgebra.Static hiding ( create )
 import Data.Maybe ( fromJust )
 
--- | Take the
---
---  * Prior mean @muPrior@,
---
---  * Prior variance @sigmaPrior@,
---
---  * Observation map (represented as a matrix) @bigH@,
---
---  * Observation noise @bigSigmaY@,
---
---  * State update function @littleA@,
---
---  * A function which return the Jacobian of the state update
---  function at a given point @bigABuilder@,
---
--- * State noise @bigSigmaX@,
---
--- * List of observations @ys@
---
--- and return the posterior mean and variance.
 extKalman ::  forall m n .
               (KnownNat m, KnownNat n, (1 <=? n) ~ 'True, (1 <=? m) ~ 'True) =>
-              R n -> Sq n ->
-              L m n -> Sq m ->
-              (R n -> R n) -> (R n -> Sq n) -> Sq n ->
-              [R m] ->
-              [(R n, Sq n)]
+              R n              -- ^ Prior mean
+              -> Sq n          -- ^ Prior variance
+              -> L m n         -- ^ Observation map (represented as a matrix)
+              -> Sq m          -- ^ Observation noise
+              -> (R n -> R n)  -- ^ State update function
+              -> (R n -> Sq n) -- ^ A function which returns the
+                               -- Jacobian of the state update
+                               -- function at a given point
+              -> Sq n          -- ^ State noise
+              -> [R m]         -- ^ List of observations
+              -> [(R n, Sq n)] -- ^ List of posterior means and variances
 extKalman muPrior sigmaPrior bigH bigSigmaY
   littleA bigABuilder bigSigmaX ys = result
   where
