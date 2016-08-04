@@ -25,7 +25,6 @@ library
   ghc-options:       -Wall
   build-depends:     base
                    , hmatrix
-                   -- Needed by Numeric.Kalman.Internal
                    , random-fu
                    , random-fu-multivariate
 
@@ -37,3 +36,9 @@ test-suite kalman-test
   ghc-options:       -Wall -threaded -rtsopts -with-rtsopts=-N  
   build-depends:     base
                    , kalman
+                   , hmatrix
+                   , random-fu
+                   , random-fu-multivariate
+                   , Chart
+                   , Chart-cairo
+                   , Chart-diagrams
