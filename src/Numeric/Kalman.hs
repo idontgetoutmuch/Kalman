@@ -22,7 +22,7 @@ module Numeric.Kalman
        (
          runKF, runEKF
        , runKS, runEKS
-       , runUKF
+       , runUKF, runUKS
        )
        where
 
@@ -447,3 +447,47 @@ runKS linEvol sysCov input future present =
   input
   future
   present
+
+---------------------------------
+--- Unscented Kalman smoother ---
+---------------------------------
+runUKS 
+  :: (KnownNat n)
+  => (a -> R n -> R n)  -- ^ System evolution function
+  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
+  -> a                  -- ^ Dynamical input
+  -> MultiNormal (R n)  -- ^ Future smoothed estimate
+  -> MultiNormal (R n)  -- ^ Present filtered estimate
+  -> MultiNormal (R n)  -- ^ Present smoothed estimate
+
+runUKS evolve sysCov input future present =
+  MultiNormal smMu smCov
+  where
+    smMu  = curMu + gkMat #> (futMu - predMu)
+    smCov = sym $ curCov + gkMat <> (futCov - predCov) <> tr gkMat
+
+    futMu  = mu future
+    futCov = unSym . cov $ future
+
+    curMu  = mu present
+    curCov = unSym . cov $ present
+
+    prevPred = runUKFPrediction evolve sysCov input present
+    predMu   = mu prevPred
+    predCov  = unSym . cov $ prevPred
+
+    gkMat = dkMat <> inv predCov
+
+    dkMat = sum $
+            zipWith (\pres fut ->
+                       (col $ weightCM * (pres - curMu)) <> (row $ fut - predMu)
+                    )
+            sigmaPoints sigmaPoints'
+
+    sqCov   = chol $ cov present
+    sqRows = map (* sqrt 3) $ toRows sqCov
+    sigmaPoints = map (curMu +) sqRows ++ map (curMu -) sqRows -- 2n points
+    sigmaPoints' = map (evolve input) sigmaPoints
+
+    -- hand tuned weights, more exlanation required
+    weightCM = 1 / 6
