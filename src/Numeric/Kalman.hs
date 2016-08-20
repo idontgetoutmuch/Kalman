@@ -3,7 +3,7 @@
 ------------------------------------
 {-
 Written by:   Dominic Steinitz, Jacob West
-Last updated: 2016-08-04
+Last updated: 2016-08-20
 
 Summary: Linear and extended Kalman filters are provided, along with
 their corresponding smoothers.
@@ -20,9 +20,10 @@ their corresponding smoothers.
 ------------------------
 module Numeric.Kalman
        (
-         runKF, runEKF
-       , runKS, runEKS
-       , runUKF, runUKS
+         runKF, runKFPrediction, runKFUpdate
+       , runEKF, runEKFPrediction, runEKFUpdate
+       , runUKF, runUKFPrediction, runUKFUpdate
+       , runKS, runEKS, runUKS
        )
        where
 
@@ -31,7 +32,7 @@ module Numeric.Kalman
 ---------------
 import GHC.TypeLits
 import Data.Random.Distribution.MultiNormal
-import qualified Numeric.LinearAlgebra as LA
+-- import qualified Numeric.LinearAlgebra as LA
 import Numeric.LinearAlgebra.Static
 
 ----------------------
@@ -93,18 +94,21 @@ runEKFPrediction evolve linEvol sysCov input estSys =
     estCov  = unSym . cov $ estSys
     lin     = linEvol input estMu
 
--- runKFPrediction :: (KnownNat n) =>
---                    (R n -> Sq n) ->     -- ^ Linear system evolution at a point
---                    Sym n ->             -- ^ Covariance matrix encoding system evolution noise
---                    MultiNormal (R n) -> -- ^ Current estimate
---                    MultiNormal (R n)    -- ^ New prediction
+runKFPrediction
+  :: (KnownNat n)
+  => (a -> R n -> Sq n) -- ^ Linear system evolution at a point
+  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
+  -> a                  -- ^ Dynamical input
+  -> MultiNormal (R n)  -- ^ Current estimate
+  -> MultiNormal (R n)  -- ^ New prediction
 
--- runKFPrediction linEvol sysCov estSys =
---   runEKFPrediction
---   (\sys -> (linEvol sys) #> sys)
---   linEvol
---   sysCov
---   estSys
+runKFPrediction linEvol sysCov input estSys =
+  runEKFPrediction
+  (\inp sys -> (linEvol inp sys) #> sys)
+  linEvol
+  sysCov
+  input
+  estSys
 
 {-- runEKFUpdate --
 
@@ -142,20 +146,23 @@ runEKFUpdate measure linMeas measCov input predSys newMeas =
     kkMat = predCov <> tr lin <> (inv skMat)
 
 
--- runKFUpdate :: (KnownNat m, KnownNat n) =>
---                (R n -> L m n) ->    -- ^ Linear measurement operator at a point
---                Sym m ->             -- ^ Covariance matrix encoding measurement noise
---                MultiNormal (R n) -> -- ^ Current prediction
---                R m ->               -- ^ New measurement
---                MultiNormal (R n)    -- ^ Updated prediction
+runKFUpdate
+  :: (KnownNat m, KnownNat n)
+  => (a -> R n -> L m n) -- ^ Linear measurement operator at a point
+  -> (a -> Sym m)        -- ^ Covariance matrix encoding measurement noise
+  -> a                   -- ^ Dynamical input
+  -> MultiNormal (R n)   -- ^ Current prediction
+  -> R m                 -- ^ New measurement
+  -> MultiNormal (R n)   -- ^ Updated prediction
 
--- runKFUpdate linMeas measCov predSys newMeas =
---   runEKFUpdate
---   (\sys -> (linMeas sys #> sys))
---   linMeas
---   measCov
---   predSys
---   newMeas
+runKFUpdate linMeas measCov input predSys newMeas =
+  runEKFUpdate
+  (\inp sys -> (linMeas inp sys #> sys))
+  linMeas
+  measCov
+  input
+  predSys
+  newMeas
 
 {-- runEKF --
 
@@ -203,22 +210,22 @@ runKF
   -> R m                 -- ^ New measurement
   -> MultiNormal (R n)   -- ^ New (filtered) estimate
 
--- runKF linMeas measCov
---   linEvol sysCov
---   estSys newMeas = updatedEstimate
---   where
---     predictedSystem = runKFPrediction linEvol sysCov estSys    
---     updatedEstimate = runKFUpdate linMeas measCov predictedSystem newMeas
-
 runKF linMeas measCov
   linEvol sysCov
-  input estSys newMeas =
-  runEKF
-  (\inp sys -> linMeas inp sys #> sys)
-  linMeas measCov
-  (\inp sys -> linEvol inp sys #> sys)
-  linEvol sysCov
-  input estSys newMeas
+  input estSys newMeas = updatedEstimate
+  where
+    predictedSystem = runKFPrediction linEvol sysCov input estSys    
+    updatedEstimate = runKFUpdate linMeas measCov input predictedSystem newMeas
+
+-- runKF linMeas measCov
+--   linEvol sysCov
+--   input estSys newMeas =
+--   runEKF
+--   (\inp sys -> linMeas inp sys #> sys)
+--   linMeas measCov
+--   (\inp sys -> linEvol inp sys #> sys)
+--   linEvol sysCov
+--   input estSys newMeas
 
 
 --- Unscented Kalman filter ---
@@ -400,6 +407,7 @@ estimate of the system at that time predicted it would do, then
 adjusting the current estimate in view of this deviation.
 
 -}
+
 runEKS
   :: (KnownNat n)
   => (a -> R n -> R n)  -- ^ System evolution function

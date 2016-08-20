@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ParallelListComp #-}
 {-# LANGUAGE TupleSections #-}
 
 module Main where
@@ -25,8 +26,299 @@ main :: IO ()
 --main = putStrLn "Test suite not yet implemented"
 
 --main = runUKFTest1
-main = runNoisySine1
+--main = runNoisySine1
+main = runGSTest1
+--main = runGSTest2
 
+---------------------------
+--- Gaussian sum filter ---
+---------------------------
+runGSTest2 :: IO ()
+runGSTest2 = do
+  putStrLn "Running Gaussian sum test 1"
+  let numSamples = 1000
+      dt = 0.01
+      tVals = take numSamples [0, dt ..]
+      truey = [(head tVals, 0), (last tVals, 0)] :: [(Double, Double)]
+      truem = [(head tVals, 0), (last tVals, 0)] :: [(Double, Double)]
+      trueb = [(head tVals, 0), (last tVals, 0)] :: [(Double, Double)]
+      truew = [(head tVals, 1), (last tVals, 1)] :: [(Double, Double)]      
+      
+  let intErr = 0.04
+      slpErr = 0.01
+      yErr   = 0.03
+      
+  let initEst = [(1/2, MultiNormal (vector [2,-0.5,0.1])  (sym . diag . vector $ [intErr, slpErr, yErr])),
+                 (1/2, MultiNormal (vector [-2,0.5,0.1]) (sym . diag . vector $ [intErr, slpErr, yErr]))]
+                :: [(Double, MultiNormal (R 3))]
+                
+      measMat = row . vector $ [0,0,1]
+      measModel = const (const measMat)
+      measErr = diag . vector $ [0.0001] :: Sq 1
+      
+      sysModel :: Double -> R 3 -> R 3
+      sysModel t cur =
+        let [b,m,y] = LA.toList (extract cur)
+        in vector [b, m, m*t + (2*b^2+b-1)]
+      sysErr = sym . diag . vector $ [0,0,0]
+
+  measurements <- replicateM numSamples (sample $ MultiNormal (vector [0]) (sym measErr))
+
+  let samples = [(t, head . LA.toList . extract $ s) | t <- tVals | s <- measurements]
+      gsfilter = scanl
+                 (\[(_w1, est1), (_w2, est2)] (t, meas) ->
+                    let pred1 = runUKFPrediction sysModel (const sysErr) t est1
+                        pmu1  = mu pred1
+                        pcov1 = unSym . cov $ pred1
+                        like1 = sym $ measMat <> pcov1 <> tr measMat + measErr
+                        neww1 = pdf (MultiNormal (measModel t pmu1 #> pmu1) (like1)) meas
+                        updt1 = runKFUpdate measModel (const (sym measErr)) t pred1 meas
+
+                        pred2 = runUKFPrediction sysModel (const sysErr) t est2
+                        pmu2  = mu pred2
+                        pcov2 = unSym . cov $ pred2
+                        like2 = sym $ measMat <> pcov2 <> tr measMat + measErr                        
+                        neww2 = pdf (MultiNormal (measModel t pmu2 #> pmu2) (like2)) meas
+                        updt2 = runKFUpdate measModel (const (sym measErr)) t pred2 meas
+                        
+                        scale = neww1 + neww2
+                        
+                    in [(neww1 / scale, updt1), (neww2 / scale, updt2)]
+                 ) initEst $ zip tVals measurements
+                 
+  let gsy1 = [(t, last . LA.toList . extract . mu . snd . head $ y) | t <- tVals | y <- gsfilter]
+      gsy2 = [(t, last . LA.toList . extract . mu . snd . last $ y) | t <- tVals | y <- gsfilter]
+      gsy  = zipWith (\t [(w1, est1), (w2, est2)] ->
+                        let p1 = last . LA.toList . extract . mu $ est1
+                            p2 = last . LA.toList . extract . mu $ est2
+                        in (t, w1 * p1 + w2 * p2))
+             tVals gsfilter
+
+  let gsm1 = [(t, (!!1) . LA.toList . extract . mu . snd . head $ y) | t <- tVals | y <- gsfilter]
+      gsm2 = [(t, (!!1) . LA.toList . extract . mu . snd . last $ y) | t <- tVals | y <- gsfilter]
+      gsm  = zipWith (\t [(w1, est1), (w2, est2)] ->
+                        let p1 = (!!1) . LA.toList . extract . mu $ est1
+                            p2 = (!!1) . LA.toList . extract . mu $ est2
+                        in (t, w1 * p1 + w2 * p2))
+             tVals gsfilter
+
+  let gsb1 = [(t, (!!0) . LA.toList . extract . mu . snd . head $ y) | t <- tVals | y <- gsfilter]
+      gsb2 = [(t, (!!0) . LA.toList . extract . mu . snd . last $ y) | t <- tVals | y <- gsfilter]
+      gsb  = zipWith (\t [(w1, est1), (w2, est2)] ->
+                        let p1 = (!!0) . LA.toList . extract . mu $ est1
+                            p2 = (!!0) . LA.toList . extract . mu $ est2
+                        in (t, w1 * p1 + w2 * p2))
+             tVals gsfilter
+
+  let gsw1 = zipWith (\t [(w1,_),_] -> (t,w1)) tVals gsfilter
+      gsw2 = zipWith (\t [_,(w2,_)] -> (t,w2)) tVals gsfilter
+      gsw  = zipWith (\t [(w1, _), (w2, _)] -> (t,w1 + w2))
+             tVals gsfilter                          
+
+  let [(w1,cur1), (w2, cur2)] = last gsfilter
+      final1 = (w1, LA.toList . extract . mu $ cur1)
+      final2 = (w2, LA.toList . extract . mu $ cur2)      
+
+  print final1
+  print final2
+  print $ w1 + w2
+  
+  toFile def "gs2-y.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [truey])
+    plot (points "Measurements" samples)
+    plot (points "G1 estimates" gsy1)
+    plot (points "G2 estimates" gsy2)
+    plot (points "GS estimates" gsy)
+
+  toFile def "gs2-m.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black --, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [truem])
+    plot (points "G1 estimates" gsm1)
+    plot (points "G2 estimates" gsm2)
+    plot (points "GS estimates" gsm)
+
+  toFile def "gs2-b.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black --, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [trueb])
+    plot (points "G1 estimates" gsb1)
+    plot (points "G2 estimates" gsb2)
+    plot (points "GS estimates" gsb)
+
+  toFile def "gs2-w.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black --, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [truew])
+    plot (points "G1 estimates" gsw1)
+    plot (points "G2 estimates" gsw2)
+    plot (points "GS estimates" gsw)
+
+
+runGSTest1 :: IO ()
+runGSTest1 = do
+  putStrLn "Running Gaussian sum test 1"
+  let numSamples = 1000
+      dt = 0.01
+      tVals = take numSamples [0, dt ..]
+      truey = [(head tVals, 0), (last tVals, 0)] :: [(Double, Double)]
+      truem = [(head tVals, 0), (last tVals, 0)] :: [(Double, Double)]
+      trueb = [(head tVals, 0), (last tVals, 0)] :: [(Double, Double)]
+      truew = [(head tVals, 1), (last tVals, 1)] :: [(Double, Double)]      
+      
+  let intErr = 0.04
+      slpErr = 0.01
+      yErr   = 0.03
+      
+  let initEst = [(1/2, MultiNormal (vector [2,-0.5,0.1])  (sym . diag . vector $ [intErr, slpErr, yErr])),
+                 (1/2, MultiNormal (vector [-2,0.5,0.1]) (sym . diag . vector $ [intErr, slpErr, yErr]))]
+                :: [(Double, MultiNormal (R 3))]
+                
+      measMat = row . vector $ [0,0,1]
+      measModel = const (const measMat)
+      measErr = diag . vector $ [0.0001] :: Sq 1
+      
+      sysModel :: Double -> R 3 -> Sq 3
+      sysModel t _cur = matrix [1,0,0, 0,1,0, 1,t,0]
+      sysErr = sym . diag . vector $ [0,0,0]
+
+  measurements <- replicateM numSamples (sample $ MultiNormal (vector [0]) (sym measErr))
+
+  let samples = [(t, head . LA.toList . extract $ s) | t <- tVals | s <- measurements]
+      gsfilter = scanl
+                 (\[(_w1, est1), (_w2, est2)] (t, meas) ->
+                    let pred1 = runKFPrediction sysModel (const sysErr) t est1
+                        pmu1  = mu pred1
+                        pcov1 = unSym . cov $ pred1
+                        like1 = sym $ measMat <> pcov1 <> tr measMat + measErr
+                        neww1 = pdf (MultiNormal (measModel t pmu1 #> pmu1) (like1)) meas
+                        updt1 = runKFUpdate measModel (const (sym measErr)) t pred1 meas
+
+                        pred2 = runKFPrediction sysModel (const sysErr) t est2
+                        pmu2  = mu pred2
+                        pcov2 = unSym . cov $ pred2
+                        like2 = sym $ measMat <> pcov2 <> tr measMat + measErr                        
+                        neww2 = pdf (MultiNormal (measModel t pmu2 #> pmu2) (like2)) meas
+                        updt2 = runKFUpdate measModel (const (sym measErr)) t pred2 meas
+                        
+                        scale = neww1 + neww2
+                        
+                    in [(neww1 / scale, updt1), (neww2 / scale, updt2)]
+                 ) initEst $ zip tVals measurements
+                 
+  let gsy1 = [(t, last . LA.toList . extract . mu . snd . head $ y) | t <- tVals | y <- gsfilter]
+      gsy2 = [(t, last . LA.toList . extract . mu . snd . last $ y) | t <- tVals | y <- gsfilter]
+      gsy  = zipWith (\t [(w1, est1), (w2, est2)] ->
+                        let p1 = last . LA.toList . extract . mu $ est1
+                            p2 = last . LA.toList . extract . mu $ est2
+                        in (t, w1 * p1 + w2 * p2))
+             tVals gsfilter
+
+  let gsm1 = [(t, (!!1) . LA.toList . extract . mu . snd . head $ y) | t <- tVals | y <- gsfilter]
+      gsm2 = [(t, (!!1) . LA.toList . extract . mu . snd . last $ y) | t <- tVals | y <- gsfilter]
+      gsm  = zipWith (\t [(w1, est1), (w2, est2)] ->
+                        let p1 = (!!1) . LA.toList . extract . mu $ est1
+                            p2 = (!!1) . LA.toList . extract . mu $ est2
+                        in (t, w1 * p1 + w2 * p2))
+             tVals gsfilter
+
+  let gsb1 = [(t, (!!0) . LA.toList . extract . mu . snd . head $ y) | t <- tVals | y <- gsfilter]
+      gsb2 = [(t, (!!0) . LA.toList . extract . mu . snd . last $ y) | t <- tVals | y <- gsfilter]
+      gsb  = zipWith (\t [(w1, est1), (w2, est2)] ->
+                        let p1 = (!!0) . LA.toList . extract . mu $ est1
+                            p2 = (!!0) . LA.toList . extract . mu $ est2
+                        in (t, w1 * p1 + w2 * p2))
+             tVals gsfilter
+
+  let gsw1 = zipWith (\t [(w1,_),_] -> (t,w1)) tVals gsfilter
+      gsw2 = zipWith (\t [_,(w2,_)] -> (t,w2)) tVals gsfilter
+      gsw  = zipWith (\t [(w1, _), (w2, _)] -> (t,w1 + w2))
+             tVals gsfilter                          
+
+  let [(w1,cur1), (w2, cur2)] = last gsfilter
+      final1 = (w1, LA.toList . extract . mu $ cur1)
+      final2 = (w2, LA.toList . extract . mu $ cur2)      
+
+  print final1
+  print final2
+  print $ w1 + w2  
+  
+  toFile def "gs1-y.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [truey])
+    plot (points "Measurements" samples)
+    plot (points "G1 estimates" gsy1)
+    plot (points "G2 estimates" gsy2)
+    plot (points "GS estimates" gsy)
+
+  toFile def "gs1-m.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black --, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [truem])
+    plot (points "G1 estimates" gsm1)
+    plot (points "G2 estimates" gsm2)
+    plot (points "GS estimates" gsm)
+
+  toFile def "gs1-b.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black --, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [trueb])
+    plot (points "G1 estimates" gsb1)
+    plot (points "G2 estimates" gsb2)
+    plot (points "GS estimates" gsb)
+
+  toFile def "gs1-w.png" $ do
+    layout_title .= "Gaussian sums"
+    setColors [opaque black --, opaque blue
+              ,opaque red, opaque green, opaque orange
+              --,opaque hotpink
+              ,opaque lightgrey, opaque lightgrey
+              ,opaque lightslategrey, opaque lightslategrey
+              ]
+    plot (line   "True signal"  [truew])
+    plot (points "G1 estimates" gsw1)
+    plot (points "G2 estimates" gsw2)
+    plot (points "GS estimates" gsw)
+    
+  
 ---------------------------------------
 --- Unscented Kalman filter testing ---
 ---------------------------------------
@@ -61,7 +353,7 @@ runUKFTest1 = do
       ukpts = map (\kf ->
                        let [x,y] = LA.toList . extract $ mu kf
                        in (x,y)
-                    ) ukf
+                  ) ukf
 
   let linMeas :: R 2 -> L 2 2
       linMeas est =
@@ -257,10 +549,10 @@ runNoisySine1 = do
               ,opaque lightslategrey, opaque lightslategrey]
     plot (line   "True signal"  [truesine])
     plot (points "Measurements" samples)
-    plot (line   "Recursively estimated signal" [kfstates])
-    plot (line   "Recursively estimated signal" [ekfstates])
-    plot (line   "Recursively estimated signal" [ukfstates])
-    plot (line   "Recursively smoothed signal"  [ksstates])
+    plot (line   "KF estimated signal" [kfstates])
+    plot (line   "EKF estimated signal" [ekfstates])
+    plot (line   "UKF estimated signal" [ukfstates])
+    plot (line   "KS smoothed signal"  [ksstates])
     plot (line   "Filtered 1 standard deviation" [kfsUpper1])
     plot (line   "Filtered 1 standard deviation" [kfsLower1])
     plot (line   "Filtered 2 standard deviations" [kfsUpper2])
@@ -278,9 +570,9 @@ runNoisySine1 = do
               ,opaque lightslategrey, opaque lightslategrey
               ]
     plot (line   "True signal"  [truea])
-    plot (line   "Recursively estimated signal" [kfa])
-    plot (line   "Recursively estimated signal" [ekfa])
-    plot (line   "Recursively estimated signal" [ukfa])
+    plot (line   "KF estimated signal" [kfa])
+    plot (line   "EKF estimated signal" [ekfa])
+    plot (line   "UKF estimated signal" [ukfa])
     plot (line   "Filtered 1 standard deviation" [kfaUpper1])
     plot (line   "Filtered 1 standard deviation" [kfaLower1])
     plot (line   "Filtered 2 standard deviations" [kfaUpper2])
@@ -293,9 +585,9 @@ runNoisySine1 = do
               ,opaque lightslategrey, opaque lightslategrey
               ]
     plot (line   "True signal"  [truep])
-    plot (line   "Recursively estimated signal" [kfp])
-    plot (line   "Recursively estimated signal" [ekfp])
-    plot (line   "Recursively estimated signal" [ukfp])
+    plot (line   "KF estimated signal" [kfp])
+    plot (line   "EKF estimated signal" [ekfp])
+    plot (line   "UKF estimated signal" [ukfp])
     plot (line   "Filtered 1 standard deviation" [kfpUpper1])
     plot (line   "Filtered 1 standard deviation" [kfpLower1])
     plot (line   "Filtered 2 standard deviations" [kfpUpper2])
@@ -308,9 +600,9 @@ runNoisySine1 = do
               ,opaque lightslategrey, opaque lightslategrey
               ]
     plot (line   "True signal"  [truev])
-    plot (line   "Recursively estimated signal" [kfv])
-    plot (line   "Recursively estimated signal" [ekfv])
-    plot (line   "Recursively estimated signal" [ukfv])
+    plot (line   "KF estimated signal" [kfv])
+    plot (line   "EKF estimated signal" [ekfv])
+    plot (line   "UKF estimated signal" [ukfv])
     plot (line   "Filtered 1 standard deviation" [kfvUpper1])
     plot (line   "Filtered 1 standard deviation" [kfvLower1])
     plot (line   "Filtered 2 standard deviations" [kfvUpper2])
