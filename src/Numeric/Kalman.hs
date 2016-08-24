@@ -84,7 +84,7 @@ runEKFPrediction evolve linEvol sysCov input estSys =
   MultiNormal predMu predCov
   where
     predMu  = evolve input estMu
-    predCov = sym $ lin <> estCov <> tr lin + (unSym $ sysCov input)
+    predCov = sym $ lin <> estCov <> tr lin + unSym (sysCov input)
 
     estMu   = mu estSys
     estCov  = unSym . cov $ estSys
@@ -97,14 +97,16 @@ runKFPrediction
   -> a                  -- ^ Dynamical input
   -> MultiNormal (R n)  -- ^ Current estimate
   -> MultiNormal (R n)  -- ^ New prediction
+runKFPrediction linEvol =
+  runEKFPrediction (\inp sys -> linEvol inp sys #> sys) linEvol
 
-runKFPrediction linEvol sysCov input estSys =
-  runEKFPrediction
-  (\inp sys -> (linEvol inp sys) #> sys)
-  linEvol
-  sysCov
-  input
-  estSys
+-- runKFPrediction linEvol sysCov input estSys =
+--   runEKFPrediction
+--   (\inp sys -> (linEvol inp sys) #> sys)
+--   linEvol
+--   sysCov
+--   input
+--   estSys
 
 -- | After a new measurement has been taken, we update our original
 -- prediction of the current system state using the result of this
@@ -134,8 +136,8 @@ runEKFUpdate measure linMeas measCov input predSys newMeas =
 
     lin   = linMeas input predMu
     voff  = newMeas - measure input predMu
-    skMat = lin <> predCov <> tr lin + (unSym $ measCov input)
-    kkMat = predCov <> tr lin <> (inv skMat)
+    skMat = lin <> predCov <> tr lin + unSym (measCov input)
+    kkMat = predCov <> tr lin <> inv skMat
 
 
 runKFUpdate
@@ -146,15 +148,17 @@ runKFUpdate
   -> MultiNormal (R n)   -- ^ Current prediction
   -> R m                 -- ^ New measurement
   -> MultiNormal (R n)   -- ^ Updated prediction
+runKFUpdate linMeas =
+  runEKFUpdate (\inp sys -> linMeas inp sys #> sys) linMeas
 
-runKFUpdate linMeas measCov input predSys newMeas =
-  runEKFUpdate
-  (\inp sys -> (linMeas inp sys #> sys))
-  linMeas
-  measCov
-  input
-  predSys
-  newMeas
+-- runKFUpdate linMeas measCov input predSys newMeas =
+--   runEKFUpdate
+--   (\inp sys -> (linMeas inp sys #> sys))
+--   linMeas
+--   measCov
+--   input
+--   predSys
+--   newMeas
 
 -- | Here we combine the prediction and update setps applied to a new
 -- measurement, thereby creating a single step of the (extended) Kalman
@@ -213,12 +217,12 @@ runUKFPrediction evolve sysCov input estSys =
     predMu  = weightM0 * estMu' +
               sum (map (weightCM *) sigmaPoints')
 
-    predCov = sym $ (col $ weightC0 * (estMu' - predMu)) <> (row $ estMu' - predMu) +
+    predCov = sym $ col (weightC0 * (estMu' - predMu)) <> row (estMu' - predMu) +
               sum (map (\sig ->
-                          (col $ weightCM * (sig - predMu)) <> (row $ sig - predMu)
+                          col (weightCM * (sig - predMu)) <> row (sig - predMu)
                        )
                    sigmaPoints') +
-              (unSym $ sysCov input)
+              unSym (sysCov input)
 
     estMu  = mu estSys
     estMu' = evolve input estMu
@@ -355,14 +359,17 @@ runKS
   -> MultiNormal (R n)  -- ^ Future smoothed estimate
   -> MultiNormal (R n)  -- ^ Present filtered estimate
   -> MultiNormal (R n)  -- ^ Present smoothed estimate
-runKS linEvol sysCov input future present =
-  runEKS
-  (\inp sys -> linEvol inp sys #> sys)
-  linEvol
-  sysCov
-  input
-  future
-  present
+runKS linEvol =
+  runEKS (\inp sys -> linEvol inp sys #> sys) linEvol
+
+-- runKS linEvol sysCov input future present =
+--   runEKS
+--   (\inp sys -> linEvol inp sys #> sys)
+--   linEvol
+--   sysCov
+--   input
+--   future
+--   present
 
 -- | Unscented Kalman smoother
 runUKS

@@ -27,15 +27,15 @@ main :: IO ()
 
 --main = runUKFTest1
 --main = runNoisySine1
-main = runGSTest1
---main = runGSTest2
+--main = runGSTest1
+main = runGSTest2
 
 ---------------------------
 --- Gaussian sum filter ---
 ---------------------------
 runGSTest2 :: IO ()
 runGSTest2 = do
-  putStrLn "Running Gaussian sum test 1"
+  putStrLn "Running Gaussian sum test 2"
   let numSamples = 1000
       dt = 0.01
       tVals = take numSamples [0, dt ..]
@@ -71,14 +71,14 @@ runGSTest2 = do
                         pmu1  = mu pred1
                         pcov1 = unSym . cov $ pred1
                         like1 = sym $ measMat <> pcov1 <> tr measMat + measErr
-                        neww1 = pdf (MultiNormal (measModel t pmu1 #> pmu1) (like1)) meas
+                        neww1 = pdf (MultiNormal (measModel t pmu1 #> pmu1) like1) meas
                         updt1 = runKFUpdate measModel (const (sym measErr)) t pred1 meas
 
                         pred2 = runUKFPrediction sysModel (const sysErr) t est2
                         pmu2  = mu pred2
                         pcov2 = unSym . cov $ pred2
                         like2 = sym $ measMat <> pcov2 <> tr measMat + measErr                        
-                        neww2 = pdf (MultiNormal (measModel t pmu2 #> pmu2) (like2)) meas
+                        neww2 = pdf (MultiNormal (measModel t pmu2 #> pmu2) like2) meas
                         updt2 = runKFUpdate measModel (const (sym measErr)) t pred2 meas
                         
                         scale = neww1 + neww2
