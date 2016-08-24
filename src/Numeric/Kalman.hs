@@ -40,6 +40,54 @@
 -- @
 --       kfiltered = scanl (runKF (const (const measMat)) (const measCovariance) (const evolMat) (const sysCovariance) 1) initEst measurements
 -- @
+--
+-- The equation of motion for a pendulum of unit length subject to
+-- [Gaussian white
+-- noise](https://en.wikipedia.org/wiki/White_noise#Mathematical_definitions)
+-- is
+--
+-- \[
+-- \frac{\mathrm{d}^2\alpha}{\mathrm{d}t^2} = -g\sin\alpha + w(t)
+-- \]
+--
+-- We can discretize this via the usual [Euler method](https://en.wikipedia.org/wiki/Euler_method)
+--
+-- \[
+-- \begin{bmatrix}
+-- x_{1,i} \\
+-- x_{2,i}
+-- \end{bmatrix}
+-- =
+-- \begin{bmatrix}
+-- x_{1,i-1} + x_{2,i-1}\Delta t \\
+-- x_{2,i-1} - g\sin x_{1,i-1}\Delta t
+-- \end{bmatrix}
+-- +
+-- \mathbf{q}_{i-1}
+-- \]
+--
+-- where \(q_i \sim {\mathcal{N}}(0,Q)\) and
+--
+-- \[
+-- Q
+-- =
+-- \begin{bmatrix}
+-- \frac{q^c \Delta t^3}{3} & \frac{q^c \Delta t^2}{2} \\
+-- \frac{q^c \Delta t^2}{2} & {q^c \Delta t}
+-- \end{bmatrix}
+-- \]
+--
+-- Assume that we can only measure the horizontal position of the
+-- pendulum and further that this measurement is subject to error so that
+--
+-- \[
+-- y_i = \sin x_i + r_k
+-- \]
+--
+-- where \(r_i \sim {\mathcal{N}}(0,R)\).
+--
+--
+-- <<diagrams/PendulumObs1B.png>>
 module Numeric.Kalman
        (
          runKF, runKFPrediction, runKFUpdate
