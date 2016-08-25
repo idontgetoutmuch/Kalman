@@ -1,4 +1,5 @@
--- | The model for the extended Kalman filter is given by
+-- | =The Theory
+-- The model for the extended Kalman filter is given by
 --
 -- \[
 -- \begin{aligned}
@@ -40,6 +41,8 @@
 -- @
 --       kfiltered = scanl (runKF (const (const measMat)) (const measCovariance) (const evolMat) (const sysCovariance) 1) initEst measurements
 -- @
+--
+-- = An Extended Example
 --
 -- The equation of motion for a pendulum of unit length subject to
 -- [Gaussian white
@@ -86,8 +89,72 @@
 --
 -- where \(r_i \sim {\mathcal{N}}(0,R)\).
 --
+-- First let's set the time step and the acceleration caused by earth's gravity.
+--
+-- @
+-- deltaT, g :: Double
+-- deltaT = 0.01
+-- g  = 9.81
+-- @
+--
+-- And some type synonyms for the pendulum state and the observable.
+--
+-- @
+-- type PendulumState = R 2
+-- type PendulumObs = R 1
+-- @
+--
+-- We can produce a single noisy sample with the following function.
+--
+-- @
+-- pendulumSample :: MonadRandom m =>
+--                   Sym 2 ->
+--                   Sym 1 ->
+--                   PendulumState ->
+--                   m (Maybe ((PendulumState, PendulumObs), PendulumState))
+-- pendulumSample bigQ bigR xPrev = do
+--   let x1Prev = fst $ headTail xPrev
+--       x2Prev = fst $ headTail $ snd $ headTail xPrev
+--   eta <- sample $ rvar (MultivariateNormal 0.0 bigQ)
+--   let x1= x1Prev + x2Prev * deltaT
+--       x2 = x2Prev - g * (sin x1Prev) * deltaT
+--       xNew = vector [x1, x2] + eta
+--       x1New = fst $ headTail xNew
+--   epsilon <-  sample $ rvar (MultivariateNormal 0.0 bigR)
+--   let yNew = vector [sin x1New] + epsilon
+--   return $ Just ((xNew, yNew), xNew)
+--
+-- @
+--
+-- Let us work in a region in which linearity breaks down and the
+-- observations are no longer symmetrical about the actuals.
+--
+-- @
+-- bigQ' :: Sym 2
+-- bigQ' = sym $ matrix bigQl'
+--
+-- qc1' :: Double
+-- qc1' = 0.01
+--
+-- bigQl' :: [Double]
+-- bigQl' = [ qc1' * deltaT^3 / 3, qc1' * deltaT^2 / 2,
+--            qc1' * deltaT^2 / 2,       qc1' * deltaT
+--          ]
+--
+-- bigR' :: Sym 1
+-- bigR'  = sym $ matrix [0.1]
+--
+-- m0' :: PendulumState
+-- m0' = vector [1.6, 0]
+--
+-- pendulumSamples' :: [(PendulumState, PendulumObs)]
+-- pendulumSamples' = evalState (ML.unfoldrM (pendulumSample bigQ' bigR') m0') (pureMT 17)
+-- @
 --
 -- <<diagrams/PendulumObs1B.png>>
+--
+-- >>> putStrLn "foo\nbar"
+--
 module Numeric.Kalman
        (
          runKF, runKFPrediction, runKFUpdate
