@@ -92,8 +92,8 @@ foo = runEKF (const observe) (const linearizedObserve) (const bigR')
              (const stateUpdate) (const linearizedStateUpdate) (const bigQ')
              undefined
 
-baz = runEKFPrediction (const stateUpdate) (const linearizedStateUpdate) (const bigQ')
-                       undefined initialDist
+baz = runUKF (const observe) (const bigR') (const stateUpdate) (const bigQ')
+             undefined
 
 initialDist :: MultiNormal (R 2)
 initialDist = MultiNormal (vector [0.0, 0.0])
@@ -103,8 +103,12 @@ initialDist = MultiNormal (vector [0.0, 0.0])
 bar = scanl foo initialDist (map (vector . pure) ws)
   where
     us = map fst pendulumSamples'
-    vs = map (snd . headTail) us
-    ws = map (fst . headTail) vs
+    ws = map (fst . headTail) us
+
+urk = scanl baz initialDist (map (vector . pure) ws)
+  where
+    us = map fst pendulumSamples'
+    ws = map (fst . headTail) us
 
 test = take 10 bar
 
@@ -164,9 +168,8 @@ main = do
   let mus = map (fst . headTail . mu) xs
   let obs = take 1000 ws
         where
-          us = map fst pendulumSamples'
-          vs = map (snd . headTail) us
-          ws = map (fst . headTail) vs
+          us = map snd pendulumSamples'
+          ws = map (fst . headTail) us
   let acts = take 1000 vs
         where
           us = map fst pendulumSamples'
@@ -176,3 +179,11 @@ main = do
                                (zip [0,1..] acts)
                                (zip [0,1..] obs)
                                (zip [0,1..] mus))
+  let ys = take 1000 urk
+  putStrLn $ show $ last ys
+  let nus = map (fst . headTail . mu) ys
+  displayHeader "diagrams/PendulumFittedUkf.png"
+                (diagEstimated "Fitted Pendulum"
+                               (zip [0,1..] acts)
+                               (zip [0,1..] obs)
+                               (zip [0,1..] nus))
