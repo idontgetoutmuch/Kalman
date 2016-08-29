@@ -19,8 +19,6 @@ import Diagrams.Backend.Cairo.CmdLine
 import Diagrams.Prelude hiding ( render, Renderable, sample )
 import Diagrams.Backend.CmdLine
 
-import System.IO.Unsafe
-
 import Data.Csv
 import System.IO hiding ( hGetContents )
 import Data.ByteString.Lazy ( hGetContents )
@@ -83,16 +81,17 @@ bar bigY = scanl foo initialDist (map (vector . pure) bigY)
 urk :: [ℝ] -> [MultiNormal (R 2)]
 urk bigY = scanl baz initialDist (map (vector . pure) bigY)
 
-denv :: DEnv Double
-denv = unsafePerformIO $ defaultEnv vectorAlignmentFns 600 500
+denv :: IO (DEnv Double)
+denv = defaultEnv vectorAlignmentFns 600 500
 
 diagEstimated :: String ->
                  [(Double, Double)] ->
                  [(Double, Double)] ->
                  [(Double, Double)] ->
-                 Diagram Cairo
-diagEstimated t l xs es =
-  fst $ runBackend denv (render (chartEstimated t l xs es) (600, 500))
+                 IO (Diagram Cairo)
+diagEstimated t l xs es = do
+  env <- denv
+  return $ fst $ runBackend env (render (chartEstimated t l xs es) (600, 500))
 
 chartEstimated :: String ->
               [(Double, Double)] ->
@@ -145,15 +144,15 @@ main = do
       let mus = map (fst . headTail . mu) xs
       let obs = Vector.toList $ Vector.map fst bigY
       let acts = Vector.toList $ Vector.map snd bigY
-      displayHeader "diagrams/PendulumFittedEkf.png"
-        (diagEstimated "Fitted Pendulum"
-          (zip [0,1..] acts)
-          (zip [0,1..] obs)
-          (zip [0,1..] mus))
+      de1 <- diagEstimated "Fitted Pendulum"
+             (zip [0,1..] acts)
+             (zip [0,1..] obs)
+             (zip [0,1..] mus)
+      displayHeader "diagrams/PendulumFittedEkf.png" de1
       let ys = take 500 (urk $ Vector.toList $ Vector.map fst bigY)
       let nus = map (fst . headTail . mu) ys
-      displayHeader "diagrams/PendulumFittedUkf.png"
-        (diagEstimated "Fitted Pendulum"
-         (zip [0,1..] acts)
-         (zip [0,1..] obs)
-         (zip [0,1..] nus))
+      de2 <- diagEstimated "Fitted Pendulum"
+             (zip [0,1..] acts)
+             (zip [0,1..] obs)
+             (zip [0,1..] nus)
+      displayHeader "diagrams/PendulumFittedUkf.png" de2
