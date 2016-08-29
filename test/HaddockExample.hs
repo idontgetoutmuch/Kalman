@@ -22,25 +22,25 @@ import Diagrams.Backend.CmdLine
 import Data.Csv
 import System.IO hiding ( hGetContents )
 import Data.ByteString.Lazy ( hGetContents )
-import qualified Data.Vector as Vector
+import qualified Data.Vector as V
 
 deltaT, g :: Double
 deltaT = 0.01
 g  = 9.81
 
-bigQ' :: Sym 2
-bigQ' = sym $ matrix bigQl'
+bigQ :: Sym 2
+bigQ = sym $ matrix bigQl
 
-qc1' :: Double
-qc1' = 0.01
+qc1 :: Double
+qc1 = 0.01
 
-bigQl' :: [Double]
-bigQl' = [ qc1' * deltaT^3 / 3, qc1' * deltaT^2 / 2,
-           qc1' * deltaT^2 / 2,       qc1' * deltaT
+bigQl :: [Double]
+bigQl = [ qc1 * deltaT^3 / 3, qc1 * deltaT^2 / 2,
+           qc1 * deltaT^2 / 2,       qc1 * deltaT
          ]
 
-bigR' :: Sym 1
-bigR'  = sym $ matrix [0.1]
+bigR :: Sym 1
+bigR  = sym $ matrix [0.1]
 
 observe :: R 2 -> R 1
 observe a = vector [sin x] where x = fst $ headTail a
@@ -60,14 +60,13 @@ linearizedStateUpdate u = matrix [1.0,                    deltaT,
   where
     (x1, _) = headTail u
 
-foo :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
-foo = runEKF (const observe) (const linearizedObserve) (const bigR')
-             (const stateUpdate) (const linearizedStateUpdate) (const bigQ')
+singleEKF :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
+singleEKF = runEKF (const observe) (const linearizedObserve) (const bigR)
+             (const stateUpdate) (const linearizedStateUpdate) (const bigQ)
              undefined
 
-
-baz :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
-baz = runUKF (const observe) (const bigR') (const stateUpdate) (const bigQ')
+singleUKF :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
+singleUKF = runUKF (const observe) (const bigR) (const stateUpdate) (const bigQ)
              undefined
 
 initialDist :: MultiNormal (R 2)
@@ -75,11 +74,11 @@ initialDist = MultiNormal (vector [1.6, 0.0])
                           (sym $ matrix [0.1, 0.0,
                                          0.0, 0.1])
 
-bar :: [ℝ] -> [MultiNormal (R 2)]
-bar bigY = scanl foo initialDist (map (vector . pure) bigY)
+multiEKF :: [ℝ] -> [MultiNormal (R 2)]
+multiEKF obs = scanl singleEKF initialDist (map (vector . pure) obs)
 
-urk :: [ℝ] -> [MultiNormal (R 2)]
-urk bigY = scanl baz initialDist (map (vector . pure) bigY)
+multiUKF :: [ℝ] -> [MultiNormal (R 2)]
+multiUKF obs = scanl singleUKF initialDist (map (vector . pure) obs)
 
 denv :: IO (DEnv Double)
 denv = defaultEnv vectorAlignmentFns 600 500
@@ -136,20 +135,20 @@ main :: IO ()
 main = do
   h <- openFile "matlabRNGs.csv" ReadMode
   cs <- hGetContents h
-  let df = (decode NoHeader cs) :: Either String (Vector.Vector (Double, Double))
+  let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
   case df of
     Left _ -> error "Whatever"
-    Right bigY -> do
-      let xs = take 500 (bar $ Vector.toList $ Vector.map fst bigY)
+    Right generatedSamples -> do
+      let xs = take 500 (multiEKF $ V.toList $ V.map fst generatedSamples)
       let mus = map (fst . headTail . mu) xs
-      let obs = Vector.toList $ Vector.map fst bigY
-      let acts = Vector.toList $ Vector.map snd bigY
+      let obs = V.toList $ V.map fst generatedSamples
+      let acts = V.toList $ V.map snd generatedSamples
       de1 <- diagEstimated "Fitted Pendulum"
              (zip [0,1..] acts)
              (zip [0,1..] obs)
              (zip [0,1..] mus)
       displayHeader "diagrams/PendulumFittedEkf.png" de1
-      let ys = take 500 (urk $ Vector.toList $ Vector.map fst bigY)
+      let ys = take 500 (multiUKF $ V.toList $ V.map fst generatedSamples)
       let nus = map (fst . headTail . mu) ys
       de2 <- diagEstimated "Fitted Pendulum"
              (zip [0,1..] acts)
