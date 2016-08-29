@@ -3,24 +3,17 @@
 
 {-# LANGUAGE DataKinds #-}
 
-module HaddockExample where
+module HaddockExample ( main ) where
 
-import qualified Control.Monad.Loops as ML
 import           Numeric.LinearAlgebra.Static
                  ( R, vector, Sym,
-                   headTail, matrix, sym,
-                   diag
+                   headTail, matrix, sym
                  )
-import           Data.Random hiding ( StdNormal, Normal )
-import           Data.Random.Source.PureMT ( pureMT )
-import           Control.Monad.State ( evalState, replicateM )
-import           MultivariateNormal ( MultivariateNormal(..) )
 import           Data.Random.Distribution.MultiNormal
 import           Numeric.Kalman
-import           GHC.TypeLits ( KnownNat )
 import           Numeric.LinearAlgebra.Static
 
-import Graphics.Rendering.Chart
+import Graphics.Rendering.Chart hiding ( Vector )
 import Graphics.Rendering.Chart.Backend.Diagrams
 import Diagrams.Backend.Cairo.CmdLine
 import Diagrams.Prelude hiding ( render, Renderable, sample )
@@ -28,26 +21,14 @@ import Diagrams.Backend.CmdLine
 
 import System.IO.Unsafe
 
+import Data.Csv
+import System.IO hiding ( hGetContents )
+import Data.ByteString.Lazy ( hGetContents )
+import qualified Data.Vector as Vector
+
 deltaT, g :: Double
 deltaT = 0.01
 g  = 9.81
-
-pendulumSample :: MonadRandom m =>
-                  Sym 2 ->
-                  Sym 1 ->
-                  R 2 ->
-                  m (Maybe ((R 2, R 1), R 2))
-pendulumSample bigQ bigR xPrev = do
-  let x1Prev = fst $ headTail xPrev
-      x2Prev = fst $ headTail $ snd $ headTail xPrev
-  eta <- sample $ rvar (MultivariateNormal 0.0 bigQ)
-  let x1= x1Prev + x2Prev * deltaT
-      x2 = x2Prev - g * (sin x1Prev) * deltaT
-      xNew = vector [x1, x2] + eta
-      x1New = fst $ headTail xNew
-  epsilon <-  sample $ rvar (MultivariateNormal 0.0 bigR)
-  let yNew = vector [sin x1New] + epsilon
-  return $ Just ((xNew, yNew), xNew)
 
 bigQ' :: Sym 2
 bigQ' = sym $ matrix bigQl'
@@ -62,12 +43,6 @@ bigQl' = [ qc1' * deltaT^3 / 3, qc1' * deltaT^2 / 2,
 
 bigR' :: Sym 1
 bigR'  = sym $ matrix [0.1]
-
-m0' :: R 2
-m0' = vector [1.6, 0]
-
-pendulumSamples' :: [(R 2, R 1)]
-pendulumSamples' = evalState (ML.unfoldrM (pendulumSample bigQ' bigR') m0') (pureMT 17)
 
 observe :: R 2 -> R 1
 observe a = vector [sin x] where x = fst $ headTail a
@@ -85,32 +60,28 @@ linearizedStateUpdate :: R 2 -> Sq 2
 linearizedStateUpdate u = matrix [1.0,                    deltaT,
                                   -g * (cos x1) * deltaT,    1.0]
   where
-    (x1, w) = headTail u
-    (x2, _) = headTail w
+    (x1, _) = headTail u
 
+foo :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
 foo = runEKF (const observe) (const linearizedObserve) (const bigR')
              (const stateUpdate) (const linearizedStateUpdate) (const bigQ')
              undefined
 
+
+baz :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
 baz = runUKF (const observe) (const bigR') (const stateUpdate) (const bigQ')
              undefined
 
 initialDist :: MultiNormal (R 2)
-initialDist = MultiNormal (vector [0.0, 0.0])
-                          (sym $ matrix [1.0, 0.0,
-                                         0.0, 1.0])
+initialDist = MultiNormal (vector [1.6, 0.0])
+                          (sym $ matrix [0.1, 0.0,
+                                         0.0, 0.1])
 
-bar = scanl foo initialDist (map (vector . pure) ws)
-  where
-    us = map fst pendulumSamples'
-    ws = map (fst . headTail) us
+bar :: [ℝ] -> [MultiNormal (R 2)]
+bar bigY = scanl foo initialDist (map (vector . pure) bigY)
 
-urk = scanl baz initialDist (map (vector . pure) ws)
-  where
-    us = map fst pendulumSamples'
-    ws = map (fst . headTail) us
-
-test = take 10 bar
+urk :: [ℝ] -> [MultiNormal (R 2)]
+urk bigY = scanl baz initialDist (map (vector . pure) bigY)
 
 denv :: DEnv Double
 denv = unsafePerformIO $ defaultEnv vectorAlignmentFns 600 500
@@ -162,28 +133,27 @@ displayHeader fn =
              , DiagramLoopOpts False Nothing 0
              )
 
+main :: IO ()
 main = do
-  let xs = take 1000 bar
-  putStrLn $ show $ last xs
-  let mus = map (fst . headTail . mu) xs
-  let obs = take 1000 ws
-        where
-          us = map snd pendulumSamples'
-          ws = map (fst . headTail) us
-  let acts = take 1000 vs
-        where
-          us = map fst pendulumSamples'
-          vs = map (fst . headTail) us
-  displayHeader "diagrams/PendulumFittedEkf.png"
-                (diagEstimated "Fitted Pendulum"
-                               (zip [0,1..] acts)
-                               (zip [0,1..] obs)
-                               (zip [0,1..] mus))
-  let ys = take 1000 urk
-  putStrLn $ show $ last ys
-  let nus = map (fst . headTail . mu) ys
-  displayHeader "diagrams/PendulumFittedUkf.png"
-                (diagEstimated "Fitted Pendulum"
-                               (zip [0,1..] acts)
-                               (zip [0,1..] obs)
-                               (zip [0,1..] nus))
+  h <- openFile "matlabRNGs.csv" ReadMode
+  cs <- hGetContents h
+  let df = (decode NoHeader cs) :: Either String (Vector.Vector (Double, Double))
+  case df of
+    Left _ -> error "Whatever"
+    Right bigY -> do
+      let xs = take 500 (bar $ Vector.toList $ Vector.map fst bigY)
+      let mus = map (fst . headTail . mu) xs
+      let obs = Vector.toList $ Vector.map fst bigY
+      let acts = Vector.toList $ Vector.map snd bigY
+      displayHeader "diagrams/PendulumFittedEkf.png"
+        (diagEstimated "Fitted Pendulum"
+          (zip [0,1..] acts)
+          (zip [0,1..] obs)
+          (zip [0,1..] mus))
+      let ys = take 500 (urk $ Vector.toList $ Vector.map fst bigY)
+      let nus = map (fst . headTail . mu) ys
+      displayHeader "diagrams/PendulumFittedUkf.png"
+        (diagEstimated "Fitted Pendulum"
+         (zip [0,1..] acts)
+         (zip [0,1..] obs)
+         (zip [0,1..] nus))
