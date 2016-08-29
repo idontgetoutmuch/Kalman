@@ -38,10 +38,6 @@
 -- The prediction and update steps depend on our system and measurement
 -- models, as well as our current estimate of the system state.
 --
--- @
---       kfiltered = scanl (runKF (const (const measMat)) (const measCovariance) (const evolMat) (const sysCovariance) 1) initEst measurements
--- @
---
 -- = An Extended Example
 --
 -- The equation of motion for a pendulum of unit length subject to
@@ -97,63 +93,70 @@
 -- g  = 9.81
 -- @
 --
--- And some type synonyms for the pendulum state and the observable.
 --
--- @
--- type PendulumState = R 2
--- type PendulumObs = R 1
--- @
+-- > bigQ :: Sym 2
+-- > bigQ = sym $ matrix bigQl
 --
--- We can produce a single noisy sample with the following function.
+-- > qc :: Double
+-- > qc = 0.01
 --
--- @
--- pendulumSample :: MonadRandom m =>
---                   Sym 2 ->
---                   Sym 1 ->
---                   PendulumState ->
---                   m (Maybe ((PendulumState, PendulumObs), PendulumState))
--- pendulumSample bigQ bigR xPrev = do
---   let x1Prev = fst $ headTail xPrev
---       x2Prev = fst $ headTail $ snd $ headTail xPrev
---   eta <- sample $ rvar (MultivariateNormal 0.0 bigQ)
---   let x1= x1Prev + x2Prev * deltaT
---       x2 = x2Prev - g * (sin x1Prev) * deltaT
---       xNew = vector [x1, x2] + eta
---       x1New = fst $ headTail xNew
---   epsilon <-  sample $ rvar (MultivariateNormal 0.0 bigR)
---   let yNew = vector [sin x1New] + epsilon
---   return $ Just ((xNew, yNew), xNew)
+-- > bigQl :: [Double]
+-- > bigQl = [ qc * deltaT^3 / 3, qc * deltaT^2 / 2,
+-- >           qc * deltaT^2 / 2,       qc * deltaT
+-- >         ]
 --
--- @
+-- > bigR :: Sym 1
+-- > bigR  = sym $ matrix [0.1]
 --
--- Let us work in a region in which linearity breaks down and the
--- observations are no longer symmetrical about the actuals.
+-- > observe :: R 2 -> R 1
+-- > observe a = vector [sin x] where x = fst $ headTail a
+-- >
+-- > linearizedObserve :: R 2 -> L 1 2
+-- > linearizedObserve a = matrix [cos x, 0.0] where x = fst $ headTail a
 --
--- @
--- bigQ' :: Sym 2
--- bigQ' = sym $ matrix bigQl'
+-- > stateUpdate :: R 2 -> R 2
+-- > stateUpdate u =  vector [x1 + x2 * deltaT, x2 - g * (sin x1) * deltaT]
+-- >   where
+-- >     (x1, w) = headTail u
+-- >     (x2, _) = headTail w
 --
--- qc1' :: Double
--- qc1' = 0.01
+-- > linearizedStateUpdate :: R 2 -> Sq 2
+-- > linearizedStateUpdate u = matrix [1.0,                    deltaT,
+-- >                                   -g * (cos x1) * deltaT,    1.0]
+-- >   where
+-- >     (x1, _) = headTail u
 --
--- bigQl' :: [Double]
--- bigQl' = [ qc1' * deltaT^3 / 3, qc1' * deltaT^2 / 2,
---            qc1' * deltaT^2 / 2,       qc1' * deltaT
---          ]
+-- > singleEKF :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
+-- > singleEKF = runEKF (const observe) (const linearizedObserve) (const bigR)
+-- >              (const stateUpdate) (const linearizedStateUpdate) (const bigQ)
+-- >              undefined
 --
--- bigR' :: Sym 1
--- bigR'  = sym $ matrix [0.1]
+-- > singleUKF :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
+-- > singleUKF = runUKF (const observe) (const bigR) (const stateUpdate) (const bigQ)
+-- >              undefined
 --
--- m0' :: PendulumState
--- m0' = vector [1.6, 0]
+-- > initialDist :: MultiNormal (R 2)
+-- > initialDist = MultiNormal (vector [1.6, 0.0])
+-- >                           (sym $ matrix [0.1, 0.0,
+-- >                                          0.0, 0.1])
 --
--- pendulumSamples' :: [(PendulumState, PendulumObs)]
--- pendulumSamples' = evalState (ML.unfoldrM (pendulumSample bigQ' bigR') m0') (pureMT 17)
--- @
+-- > multiEKF :: [ℝ] -> [MultiNormal (R 2)]
+-- > multiEKF obs = scanl singleEKF initialDist (map (vector . pure) obs)
 --
--- <<diagrams/PendulumObs1B.png>>
+-- Using some data generated using code made available with Simo
+-- Särkkä's
+-- [book](http://www.cambridge.org/gb/academic/subjects/statistics-probability/applied-probability-and-stochastic-networks/bayesian-filtering-and-smoothing),
+-- we can track the pendulum using the extended Kalman filter.
 --
--- >>> putStrLn "foo\nbar"
+-- <<diagrams/PendulumFittedEkf.png>>
+--
+-- > multiUKF :: [ℝ] -> [MultiNormal (R 2)]
+-- > multiUKF obs = scanl singleUKF initialDist (map (vector . pure) obs)
+-- >
+--
+-- And also track it using the unscented Kalman filter.
+--
+-- <<diagrams/PendulumFittedUkf.png>>
 --
 module Numeric.Kalman
        (
