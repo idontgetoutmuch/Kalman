@@ -1,4 +1,11 @@
--- | =The Theory
+-----------------------------------------------------------------------------
+-- |
+-- Module      :  Numeric.Kalman
+-- Copyright   :  (c) 2016 FP Complete Corporation
+-- License     :  MIT (see LICENSE)
+-- Maintainer  :  dominic@steinitz.org
+--
+-- =The Theory
 -- The model for the extended Kalman filter is given by
 --
 -- \[
@@ -87,60 +94,57 @@
 --
 -- First let's set the time step and the acceleration caused by earth's gravity.
 --
--- @
--- deltaT, g :: Double
--- deltaT = 0.01
--- g  = 9.81
--- @
+-- > deltaT, g :: Double
+-- > deltaT = 0.01
+-- > g  = 9.81
 --
---
+-- > {-# LANGUAGE DataKinds #-}
+-- >
+-- > import Numeric.Kalman
+-- >
 -- > bigQ :: Sym 2
 -- > bigQ = sym $ matrix bigQl
---
+-- >
 -- > qc :: Double
 -- > qc = 0.01
---
+-- >
 -- > bigQl :: [Double]
 -- > bigQl = [ qc * deltaT^3 / 3, qc * deltaT^2 / 2,
 -- >           qc * deltaT^2 / 2,       qc * deltaT
 -- >         ]
---
+-- >
 -- > bigR :: Sym 1
 -- > bigR  = sym $ matrix [0.1]
---
+-- >
 -- > observe :: R 2 -> R 1
 -- > observe a = vector [sin x] where x = fst $ headTail a
 -- >
 -- > linearizedObserve :: R 2 -> L 1 2
 -- > linearizedObserve a = matrix [cos x, 0.0] where x = fst $ headTail a
---
+-- >
 -- > stateUpdate :: R 2 -> R 2
 -- > stateUpdate u =  vector [x1 + x2 * deltaT, x2 - g * (sin x1) * deltaT]
 -- >   where
 -- >     (x1, w) = headTail u
 -- >     (x2, _) = headTail w
---
+-- >
 -- > linearizedStateUpdate :: R 2 -> Sq 2
 -- > linearizedStateUpdate u = matrix [1.0,                    deltaT,
 -- >                                   -g * (cos x1) * deltaT,    1.0]
 -- >   where
 -- >     (x1, _) = headTail u
 --
--- > singleEKF :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
 -- > singleEKF = runEKF (const observe) (const linearizedObserve) (const bigR)
 -- >              (const stateUpdate) (const linearizedStateUpdate) (const bigQ)
 -- >              undefined
 --
--- > singleUKF :: MultiNormal (R 2) -> R 1 -> MultiNormal (R 2)
 -- > singleUKF = runUKF (const observe) (const bigR) (const stateUpdate) (const bigQ)
 -- >              undefined
 --
--- > initialDist :: MultiNormal (R 2)
 -- > initialDist = MultiNormal (vector [1.6, 0.0])
 -- >                           (sym $ matrix [0.1, 0.0,
 -- >                                          0.0, 0.1])
 --
--- > multiEKF :: [ℝ] -> [MultiNormal (R 2)]
 -- > multiEKF obs = scanl singleEKF initialDist (map (vector . pure) obs)
 --
 -- Using some data generated using code made available with Simo
@@ -150,7 +154,6 @@
 --
 -- <<diagrams/PendulumFittedEkf.png>>
 --
--- > multiUKF :: [ℝ] -> [MultiNormal (R 2)]
 -- > multiUKF obs = scanl singleUKF initialDist (map (vector . pure) obs)
 -- >
 --
@@ -158,6 +161,123 @@
 --
 -- <<diagrams/PendulumFittedUkf.png>>
 --
+-- <<diagrams/src_Numeric_Kalman_diagK.svg#diagram=diagK&height=600&width=500>>
+--
+-- <<diagrams/src_Numeric_Kalman_diagE.svg#diagram=diagE&height=600&width=500>>
+--
+-- > import qualified Graphics.Rendering.Chart as C
+-- > import Graphics.Rendering.Chart.Backend.Diagrams
+-- > import Data.Colour
+-- > import Data.Colour.Names
+-- > import Data.Default.Class
+-- > import Control.Lens
+-- >
+-- > import Data.Csv
+-- > import System.IO hiding ( hGetContents )
+-- > import Data.ByteString.Lazy ( hGetContents )
+-- > import qualified Data.Vector as V
+-- >
+-- > import Numeric.LinearAlgebra.Static
+-- >
+-- > import Data.Random.Distribution.MultiNormal
+-- >
+-- > setLinesBlue :: C.PlotLines a b -> C.PlotLines a b
+-- > setLinesBlue = C.plot_lines_style  . C.line_color .~ opaque blue
+-- >
+-- > chart = C.toRenderable layout
+-- >   where
+-- >     am :: Double -> Double
+-- >     am x = (sin (x*3.14159/45) + 1) / 2 * (sin (x*3.14159/5))
+-- >
+-- >     sinusoid1 = C.plot_lines_values .~ [[ (x,(am x)) | x <- [0,(0.5)..400]]]
+-- >               $ C.plot_lines_style  . C.line_color .~ opaque blue
+-- >               $ C.plot_lines_title .~ "am"
+-- >               $ def
+-- >
+-- >     sinusoid2 = C.plot_points_style .~ C.filledCircles 2 (opaque red)
+-- >               $ C.plot_points_values .~ [ (x,(am x)) | x <- [0,7..400]]
+-- >               $ C.plot_points_title .~ "am points"
+-- >               $ def
+-- >
+-- >     layout = C.layout_title .~ "Amplitude Modulation"
+-- >            $ C.layout_plots .~ [C.toPlot sinusoid1,
+-- >                                 C.toPlot sinusoid2]
+-- >            $ def
+-- >
+-- > chartEstimated :: String ->
+-- >               [(Double, Double)] ->
+-- >               [(Double, Double)] ->
+-- >               [(Double, Double)] ->
+-- >               C.Renderable ()
+-- > chartEstimated title acts obs ests = C.toRenderable layout
+-- >   where
+-- >
+-- >     actuals = C.plot_lines_values .~ [acts]
+-- >             $ C.plot_lines_style  . C.line_color .~ opaque red
+-- >             $ C.plot_lines_title .~ "Actual Trajectory"
+-- >             $ C.plot_lines_style  . C.line_width .~ 1.0
+-- >             $ def
+-- >
+-- >     measurements = C.plot_points_values .~ obs
+-- >                  $ C.plot_points_style  . C.point_color .~ opaque blue
+-- >                  $ C.plot_points_title .~ "Measurements"
+-- >                  $ def
+-- >
+-- >     estimas = C.plot_lines_values .~ [ests]
+-- >             $ C.plot_lines_style  . C.line_color .~ opaque black
+-- >             $ C.plot_lines_title .~ "Inferred Trajectory"
+-- >             $ C.plot_lines_style  . C.line_width .~ 1.0
+-- >             $ def
+-- >
+-- >     layout = C.layout_title .~ title
+-- >            $ C.layout_plots .~ [C.toPlot actuals, C.toPlot measurements, C.toPlot estimas]
+-- >            $ C.layout_y_axis . C.laxis_title .~ "Angle / Horizontal Displacement"
+-- >            $ C.layout_y_axis . C.laxis_override .~ C.axisGridHide
+-- >            $ C.layout_x_axis . C.laxis_title .~ "Time"
+-- >            $ C.layout_x_axis . C.laxis_override .~ C.axisGridHide
+-- >            $ def
+-- >
+-- > diagK = do
+-- >   denv <- defaultEnv C.vectorAlignmentFns 600 500
+-- >   return $ fst $ runBackend denv (C.render chart (600, 500))
+-- >
+-- > diagE = do
+-- >   h <- openFile "matlabRNGs.csv" ReadMode
+-- >   cs <- hGetContents h
+-- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
+-- >   case df of
+-- >     Left _ -> error "Whatever"
+-- >     Right generatedSamples -> do
+-- >       let xs = take 500 (multiEKF $ V.toList $ V.map fst generatedSamples)
+-- >       let mus = map (fst . headTail . mu) xs
+-- >       let obs = V.toList $ V.map fst generatedSamples
+-- >       let acts = V.toList $ V.map snd generatedSamples
+-- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
+-- >       let charte = chartEstimated "Extended Kalman Filter"
+-- >                                   (zip [0,1..] acts)
+-- >                                   (zip [0,1..] obs)
+-- >                                   (zip [0,1..] mus)
+-- >       return $ fst $ runBackend denv (C.render charte (600, 500))
+-- >
+-- > diagU = do
+-- >   h <- openFile "matlabRNGs.csv" ReadMode
+-- >   cs <- hGetContents h
+-- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
+-- >   case df of
+-- >     Left _ -> error "Whatever"
+-- >     Right generatedSamples -> do
+-- >       let ys = take 500 (multiUKF $ V.toList $ V.map fst generatedSamples)
+-- >       let nus = map (fst . headTail . mu) ys
+-- >       let obs = V.toList $ V.map fst generatedSamples
+-- >       let acts = V.toList $ V.map snd generatedSamples
+-- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
+-- >       let charte = chartEstimated "Unscented Kalman Filter"
+-- >                                   (zip [0,1..] acts)
+-- >                                   (zip [0,1..] obs)
+-- >                                   (zip [0,1..] nus)
+-- >       return $ fst $ runBackend denv (C.render charte (600, 500))
+--
+-----------------------------------------------------------------------------
 module Numeric.Kalman
        (
          runKF, runKFPrediction, runKFUpdate
