@@ -10,26 +10,37 @@
 --
 -- \[
 -- \begin{aligned}
--- \boldsymbol{x}_i &= \boldsymbol{a}(\boldsymbol{x}_{i-1}) + \boldsymbol{\psi}_{i-1} \\
--- \boldsymbol{y}_i &= {H}\boldsymbol{x}_i + \boldsymbol{\upsilon}_i
+-- \boldsymbol{x}_i &= \boldsymbol{a}_i(\boldsymbol{x}_{i-1}) + \boldsymbol{\psi}_{i-1} \\
+-- \boldsymbol{y}_i &= \boldsymbol{h}_i(\boldsymbol{x}_i) + \boldsymbol{\upsilon}_i
 -- \end{aligned}
 -- \]
 --
 -- where
 --
--- * \(\boldsymbol{a}\)\ is some non-linear vector-valued state update
--- function.
+-- * \(\boldsymbol{a_i}\)\ is some non-linear vector-valued possibly
+-- time-varying state update function.
 --
--- * \(\boldsymbol{\psi}_{i}\) are independent identically normally
+-- * \(\boldsymbol{\psi}_{i}\) are independent normally
 -- distributed random variables with mean 0 representing the fact that
--- the state update is noisy: \(\boldsymbol{\psi}_{i} \sim {\cal{N}}(0,Q)\).
+-- the state update is noisy: \(\boldsymbol{\psi}_{i} \sim {\cal{N}}(0,Q_i)\).
 --
--- * \({H}\) is a matrix which represents how we observe the
--- hidden state process.
+-- * \(\boldsymbol{h}_i\)\ is some non-linear vector-valued possibly time-varying
+-- function describing how we observe the hidden state process.
 --
--- * \(\boldsymbol{\upsilon}_i\) are independent identically normally
+-- * \(\boldsymbol{\upsilon}_i\) are independent normally
 -- distributed random variables with mean 0 represent the fact that
--- the observations are noisy: \(\boldsymbol{\upsilon}_{i} \sim {\cal{N}}(0,R)\).
+-- the observations are noisy: \(\boldsymbol{\upsilon}_{i} \sim {\cal{N}}(0,R_i)\).
+--
+-- Note that in most presentations of the Kalman filter (the
+-- [wikipedia](https://en.wikipedia.org/wiki/Kalman_filter)
+-- presentation being an exception), the state update function and the
+-- observation function are taken to be constant over time as is the
+-- noise for the state and the noise for
+-- the observation. In symbols, \(\forall i \, \boldsymbol{a}_i = \boldsymbol{a}\)
+-- for some \(\boldsymbol{a}\), \(\forall i \, \boldsymbol{h}_i = \boldsymbol{h}\)
+-- for some \(\boldsymbol{h}\),
+-- \(\forall i \, Q_i = Q\) for some \(Q\) and \(\forall i \, \boldsymbol{a}_i = R\)
+-- for some \(R\).
 --
 -- We assume the whole process starts at 0 with our belief of the state (aka the
 -- prior state) being given by
@@ -87,21 +98,23 @@
 -- pendulum and further that this measurement is subject to error so that
 --
 -- \[
--- y_i = \sin x_i + r_k
+-- y_i = \sin x_i + r_i
 -- \]
 --
 -- where \(r_i \sim {\mathcal{N}}(0,R)\).
 --
 -- First let's set the time step and the acceleration caused by earth's gravity.
 --
--- > deltaT, g :: Double
--- > deltaT = 0.01
--- > g  = 9.81
---
 -- > {-# LANGUAGE DataKinds #-}
 -- >
 -- > import Numeric.Kalman
 -- >
+-- > deltaT, g :: Double
+-- > deltaT = 0.01
+-- > g  = 9.81
+--
+-- And set up the noises for the filter.
+--
 -- > bigQ :: Sym 2
 -- > bigQ = sym $ matrix bigQl
 -- >
@@ -115,24 +128,34 @@
 -- >
 -- > bigR :: Sym 1
 -- > bigR  = sym $ matrix [0.1]
--- >
--- > observe :: R 2 -> R 1
--- > observe a = vector [sin x] where x = fst $ headTail a
--- >
--- > linearizedObserve :: R 2 -> L 1 2
--- > linearizedObserve a = matrix [cos x, 0.0] where x = fst $ headTail a
--- >
+--
+-- The state update and observation functions:
+--
 -- > stateUpdate :: R 2 -> R 2
 -- > stateUpdate u =  vector [x1 + x2 * deltaT, x2 - g * (sin x1) * deltaT]
 -- >   where
 -- >     (x1, w) = headTail u
 -- >     (x2, _) = headTail w
 -- >
+-- > observe :: R 2 -> R 1
+-- > observe a = vector [sin x] where x = fst $ headTail a
+--
+-- For the extended filter we need the derivatives of the state update
+-- and observation functions. We create these by hand; another
+-- possibility would be to use [automatic
+-- differentiation](https://hackage.haskell.org/package/ad).
+--
+-- > linearizedObserve :: R 2 -> L 1 2
+-- > linearizedObserve a = matrix [cos x, 0.0] where x = fst $ headTail a
+-- >
 -- > linearizedStateUpdate :: R 2 -> Sq 2
 -- > linearizedStateUpdate u = matrix [1.0,                    deltaT,
 -- >                                   -g * (cos x1) * deltaT,    1.0]
 -- >   where
 -- >     (x1, _) = headTail u
+--
+-- Now we can create extended and unscented filters which consume a
+-- single observation.
 --
 -- > singleEKF = runEKF (const observe) (const linearizedObserve) (const bigR)
 -- >              (const stateUpdate) (const linearizedStateUpdate) (const bigQ)
@@ -141,29 +164,34 @@
 -- > singleUKF = runUKF (const observe) (const bigR) (const stateUpdate) (const bigQ)
 -- >              undefined
 --
--- > initialDist = MultiNormal (vector [1.6, 0.0])
--- >                           (sym $ matrix [0.1, 0.0,
--- >                                          0.0, 0.1])
+-- We start off not too far from the actual value.
 --
--- > multiEKF obs = scanl singleEKF initialDist (map (vector . pure) obs)
+-- > initialDist =  (vector [1.6, 0.0],
+-- >                 sym $ matrix [0.1, 0.0,
+-- >                               0.0, 0.1])
 --
 -- Using some data generated using code made available with Simo
 -- Särkkä's
 -- [book](http://www.cambridge.org/gb/academic/subjects/statistics-probability/applied-probability-and-stochastic-networks/bayesian-filtering-and-smoothing),
 -- we can track the pendulum using the extended Kalman filter.
 --
--- <<diagrams/PendulumFittedEkf.png>>
+-- > multiEKF obs = scanl singleEKF initialDist (map (vector . pure) obs)
 --
--- > multiUKF obs = scanl singleUKF initialDist (map (vector . pure) obs)
--- >
+-- And then plot the results.
+--
+-- <<diagrams/src_Numeric_Kalman_diagE.svg#diagram=diagE&height=600&width=500>>
 --
 -- And also track it using the unscented Kalman filter.
 --
--- <<diagrams/PendulumFittedUkf.png>>
+-- > multiUKF obs = scanl singleUKF initialDist (map (vector . pure) obs)
 --
--- <<diagrams/src_Numeric_Kalman_diagK.svg#diagram=diagK&height=600&width=500>>
+-- And also plot the results
 --
--- <<diagrams/src_Numeric_Kalman_diagE.svg#diagram=diagE&height=600&width=500>>
+-- <<diagrams/src_Numeric_Kalman_diagU.svg#diagram=diagU&height=600&width=500>>
+--
+-- === Code for Plotting
+--
+-- The full code for plotting the results:
 --
 -- > import qualified Graphics.Rendering.Chart as C
 -- > import Graphics.Rendering.Chart.Backend.Diagrams
@@ -178,31 +206,6 @@
 -- > import qualified Data.Vector as V
 -- >
 -- > import Numeric.LinearAlgebra.Static
--- >
--- > import Data.Random.Distribution.MultiNormal
--- >
--- > setLinesBlue :: C.PlotLines a b -> C.PlotLines a b
--- > setLinesBlue = C.plot_lines_style  . C.line_color .~ opaque blue
--- >
--- > chart = C.toRenderable layout
--- >   where
--- >     am :: Double -> Double
--- >     am x = (sin (x*3.14159/45) + 1) / 2 * (sin (x*3.14159/5))
--- >
--- >     sinusoid1 = C.plot_lines_values .~ [[ (x,(am x)) | x <- [0,(0.5)..400]]]
--- >               $ C.plot_lines_style  . C.line_color .~ opaque blue
--- >               $ C.plot_lines_title .~ "am"
--- >               $ def
--- >
--- >     sinusoid2 = C.plot_points_style .~ C.filledCircles 2 (opaque red)
--- >               $ C.plot_points_values .~ [ (x,(am x)) | x <- [0,7..400]]
--- >               $ C.plot_points_title .~ "am points"
--- >               $ def
--- >
--- >     layout = C.layout_title .~ "Amplitude Modulation"
--- >            $ C.layout_plots .~ [C.toPlot sinusoid1,
--- >                                 C.toPlot sinusoid2]
--- >            $ def
 -- >
 -- > chartEstimated :: String ->
 -- >               [(Double, Double)] ->
@@ -237,10 +240,6 @@
 -- >            $ C.layout_x_axis . C.laxis_override .~ C.axisGridHide
 -- >            $ def
 -- >
--- > diagK = do
--- >   denv <- defaultEnv C.vectorAlignmentFns 600 500
--- >   return $ fst $ runBackend denv (C.render chart (600, 500))
--- >
 -- > diagE = do
 -- >   h <- openFile "matlabRNGs.csv" ReadMode
 -- >   cs <- hGetContents h
@@ -249,7 +248,7 @@
 -- >     Left _ -> error "Whatever"
 -- >     Right generatedSamples -> do
 -- >       let xs = take 500 (multiEKF $ V.toList $ V.map fst generatedSamples)
--- >       let mus = map (fst . headTail . mu) xs
+-- >       let mus = map (fst . headTail . fst) xs
 -- >       let obs = V.toList $ V.map fst generatedSamples
 -- >       let acts = V.toList $ V.map snd generatedSamples
 -- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
@@ -267,7 +266,7 @@
 -- >     Left _ -> error "Whatever"
 -- >     Right generatedSamples -> do
 -- >       let ys = take 500 (multiUKF $ V.toList $ V.map fst generatedSamples)
--- >       let nus = map (fst . headTail . mu) ys
+-- >       let nus = map (fst . headTail . fst) ys
 -- >       let obs = V.toList $ V.map fst generatedSamples
 -- >       let acts = V.toList $ V.map snd generatedSamples
 -- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
@@ -278,6 +277,7 @@
 -- >       return $ fst $ runBackend denv (C.render charte (600, 500))
 --
 -----------------------------------------------------------------------------
+
 module Numeric.Kalman
        (
          runKF, runKFPrediction, runKFUpdate
@@ -288,8 +288,8 @@ module Numeric.Kalman
        where
 
 import GHC.TypeLits
-import Data.Random.Distribution.MultiNormal
 import Numeric.LinearAlgebra.Static
+import Data.Maybe ( fromJust )
 
 -- | Given our system model and our previous estimate of the system state,
 -- we generate a prediction of the current system state by taking the
@@ -310,22 +310,19 @@ import Numeric.LinearAlgebra.Static
 -- distribution of predicted system states with mean the evolved MAP
 -- state from the previous estimate.
 runEKFPrediction
-  :: (KnownNat n)
-  => (a -> R n -> R n)  -- ^ System evolution function
-  -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point
-  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
-  -> a                  -- ^ Dynamical input
-  -> MultiNormal (R n)  -- ^ Current estimate
-  -> MultiNormal (R n)  -- ^ New prediction
+  :: KnownNat n
+  => (a -> R n -> R n)  -- ^ System evolution function \(\boldsymbol{a}_n(s)\)
+  -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point \(\frac{\partial \boldsymbol{a}_n}{\partial s}\big|_s\)
+  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise \(Q_n\)
+  -> a                  -- ^ Dynamical input \(n\)
+  -> (R n, Sym n)       -- ^ Current estimate \((\hat{\boldsymbol{x}}_{n-1}, \hat{\boldsymbol{\Sigma}}_{n-1})\)
+  -> (R n, Sym n)       -- ^ New prediction \((\hat{\boldsymbol{x}}_n, \hat{\boldsymbol{\Sigma}}_n)\)
 
-runEKFPrediction evolve linEvol sysCov input estSys =
-  MultiNormal predMu predCov
+runEKFPrediction evolve linEvol sysCov input (estMu, estCov) =
+  (predMu, predCov)
   where
     predMu  = evolve input estMu
-    predCov = sym $ lin <> estCov <> tr lin + unSym (sysCov input)
-
-    estMu   = mu estSys
-    estCov  = unSym . cov $ estSys
+    predCov = sym $ lin <> unSym estCov <> tr lin + unSym (sysCov input)
     lin     = linEvol input estMu
 
 runKFPrediction
@@ -333,18 +330,10 @@ runKFPrediction
   => (a -> R n -> Sq n) -- ^ Linear system evolution at a point
   -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
   -> a                  -- ^ Dynamical input
-  -> MultiNormal (R n)  -- ^ Current estimate
-  -> MultiNormal (R n)  -- ^ New prediction
+  -> (R n, Sym n)       -- ^ Current estimate
+  -> (R n, Sym n)       -- ^ New prediction
 runKFPrediction linEvol =
   runEKFPrediction (\inp sys -> linEvol inp sys #> sys) linEvol
-
--- runKFPrediction linEvol sysCov input estSys =
---   runEKFPrediction
---   (\inp sys -> (linEvol inp sys) #> sys)
---   linEvol
---   sysCov
---   input
---   estSys
 
 -- | After a new measurement has been taken, we update our original
 -- prediction of the current system state using the result of this
@@ -359,23 +348,22 @@ runEKFUpdate
   -> (a -> R n -> L m n) -- ^ Linearization of the measurement at a point
   -> (a -> Sym m)        -- ^ Covariance matrix encoding measurement noise
   -> a                   -- ^ Dynamical input
-  -> MultiNormal (R n)   -- ^ Current prediction
+  -> (R n, Sym n)        -- ^ Current prediction
   -> R m                 -- ^ New measurement
-  -> MultiNormal (R n)   -- ^ Updated prediction
+  -> (R n, Sym n)        -- ^ Updated prediction
 
-runEKFUpdate measure linMeas measCov input predSys newMeas =
-  MultiNormal newMu newCov
+runEKFUpdate measure linMeas measCov input (predMu, predCov') newMeas =
+  (newMu, newCov)
   where
     newMu  = predMu + kkMat #> voff
     newCov = sym $ predCov - kkMat <> skMat <> tr kkMat
 
-    predMu  = mu predSys
-    predCov = unSym . cov $ predSys
+    predCov = unSym predCov'
 
     lin   = linMeas input predMu
     voff  = newMeas - measure input predMu
     skMat = lin <> predCov <> tr lin + unSym (measCov input)
-    kkMat = predCov <> tr lin <> inv skMat
+    kkMat = predCov <> tr lin <> unsafeInv skMat
 
 
 runKFUpdate
@@ -383,20 +371,11 @@ runKFUpdate
   => (a -> R n -> L m n) -- ^ Linear measurement operator at a point
   -> (a -> Sym m)        -- ^ Covariance matrix encoding measurement noise
   -> a                   -- ^ Dynamical input
-  -> MultiNormal (R n)   -- ^ Current prediction
+  -> (R n, Sym n)        -- ^ Current prediction
   -> R m                 -- ^ New measurement
-  -> MultiNormal (R n)   -- ^ Updated prediction
+  -> (R n, Sym n)        -- ^ Updated prediction
 runKFUpdate linMeas =
   runEKFUpdate (\inp sys -> linMeas inp sys #> sys) linMeas
-
--- runKFUpdate linMeas measCov input predSys newMeas =
---   runEKFUpdate
---   (\inp sys -> (linMeas inp sys #> sys))
---   linMeas
---   measCov
---   input
---   predSys
---   newMeas
 
 -- | Here we combine the prediction and update setps applied to a new
 -- measurement, thereby creating a single step of the (extended) Kalman
@@ -410,10 +389,9 @@ runEKF
   -> (a -> R n -> Sq n)  -- ^ Linearization of the system evolution at a point
   -> (a -> Sym n)        -- ^ Covariance matrix encoding system evolution noise
   -> a                   -- ^ Dynamical input
-  -> MultiNormal (R n)   -- ^ Current estimate
+  -> (R n, Sym n)        -- ^ Current estimate
   -> R m                 -- ^ New measurement
-  -> MultiNormal (R n)   -- ^ New (filtered) estimate
-
+  -> (R n, Sym n)        -- ^ New (filtered) estimate
 runEKF measure linMeas measCov
   evolve linEvol sysCov
   input estSys newMeas = updatedEstimate
@@ -431,9 +409,9 @@ runKF
   -> (a -> R n -> Sq n)  -- ^ Linear system evolution at a point
   -> (a -> Sym n)        -- ^ Covariance matrix encoding system evolution noise
   -> a                   -- ^ Dynamical input
-  -> MultiNormal (R n)   -- ^ Current estimate
+  -> (R n, Sym n)        -- ^ Current estimate
   -> R m                 -- ^ New measurement
-  -> MultiNormal (R n)   -- ^ New (filtered) estimate
+  -> (R n, Sym n)        -- ^ New (filtered) estimate
 runKF linMeas measCov
   linEvol sysCov
   input estSys newMeas = updatedEstimate
@@ -446,11 +424,11 @@ runUKFPrediction
   => (a -> R n -> R n) -- ^ System evolution function at a point
   -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise
   -> a                 -- ^ Dynamical input
-  -> MultiNormal (R n) -- ^ Current estimate
-  -> MultiNormal (R n) -- ^ Prediction
+  -> (R n, Sym n)      -- ^ Current estimate
+  -> (R n, Sym n)      -- ^ Prediction
 
-runUKFPrediction evolve sysCov input estSys =
-  MultiNormal predMu predCov
+runUKFPrediction evolve sysCov input (estMu, estCov) =
+  (predMu, predCov)
   where
     predMu  = weightM0 * estMu' +
               sum (map (weightCM *) sigmaPoints')
@@ -462,10 +440,9 @@ runUKFPrediction evolve sysCov input estSys =
                    sigmaPoints') +
               unSym (sysCov input)
 
-    estMu  = mu estSys
     estMu' = evolve input estMu
 
-    sqCov  = chol $ cov estSys
+    sqCov  = chol estCov
     sqRows = map (* sqrt 3) $ toRows sqCov
     sigmaPoints = map (estMu +) sqRows ++ map (estMu -) sqRows -- 2n points
     sigmaPoints' = map (evolve input) sigmaPoints
@@ -481,20 +458,19 @@ runUKFUpdate
   => (a -> R n -> R m) -- ^ Measurement transformation
   -> (a -> Sym m)      -- ^ Covariance matrix encoding measurement noise
   -> a                 -- ^ Dynamical input
-  -> MultiNormal (R n) -- ^ Current prediction
+  -> (R n, Sym n)      -- ^ Current prediction
   -> R m               -- ^ New measurement
-  -> MultiNormal (R n) -- ^ Updated prediction
+  -> (R n, Sym n)      -- ^ Updated prediction
 
-runUKFUpdate measure measCov input predSys newMeas =
-  MultiNormal newMu newCov
+runUKFUpdate measure measCov input (predMu, predCov) newMeas =
+  (newMu, newCov)
   where
     newMu  = predMu + kkMat #> (newMeas - upMu)
-    newCov = sym $ (unSym $ cov predSys) - kkMat <> skMat <> tr kkMat
+    newCov = sym $ (unSym predCov) - kkMat <> skMat <> tr kkMat
 
-    predMu  = mu predSys
     predMu' = measure input predMu
 
-    kkMat = ckMat <> inv skMat
+    kkMat = ckMat <> unsafeInv skMat
     upMu  = weightM0 * predMu' +
             sum (map (weightCM *) sigmaPoints')
 
@@ -511,7 +487,7 @@ runUKFUpdate measure measCov input predSys newMeas =
                     )
             sigmaPoints sigmaPoints'
 
-    sqCov   = chol $ cov predSys
+    sqCov   = chol predCov
     sqRows = map (* sqrt 3) $ toRows sqCov
     sigmaPoints = map (predMu +) sqRows ++ map (predMu -) sqRows -- 2n points
     sigmaPoints' = map (measure input) sigmaPoints
@@ -530,9 +506,9 @@ runUKF
   -> (a -> R n -> R n) -- ^ System evolution function
   -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise
   -> a                 -- ^ Dynamical input
-  -> MultiNormal (R n) -- ^ Current estimate
+  -> (R n, Sym n)      -- ^ Current estimate
   -> R m               -- ^ New measurement
-  -> MultiNormal (R n) -- ^ New (filtered) estimate
+  -> (R n, Sym n)      -- ^ New (filtered) estimate
 runUKF measure measCov
   evolve sysCov
   input estSys newMeas = updatedEstimate
@@ -565,27 +541,24 @@ runEKS
   -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point
   -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
   -> a                  -- ^ Dynamical input
-  -> MultiNormal (R n)  -- ^ Future smoothed estimate
-  -> MultiNormal (R n)  -- ^ Present filtered estimate
-  -> MultiNormal (R n)  -- ^ Present smoothed estimate
+  -> (R n, Sym n)       -- ^ Future smoothed estimate
+  -> (R n, Sym n)       -- ^ Present filtered estimate
+  -> (R n, Sym n)       -- ^ Present smoothed estimate
 
-runEKS sysEvol linEvol sysCov input future present =
-  MultiNormal smMu smCov
+runEKS sysEvol linEvol sysCov input (futMu, futCov') (curMu, curCov') =
+  (smMu, smCov)
   where
     smMu  = curMu + gkMat #> (futMu - predMu)
     smCov = sym $ curCov + gkMat <> (futCov - predCov) <> tr gkMat
 
-    futMu  = mu future
-    futCov = unSym . cov $ future
+    futCov = unSym futCov'
 
-    curMu  = mu present
-    curCov = unSym . cov $ present
+    curCov = unSym curCov'
 
-    prevPred = runEKFPrediction sysEvol linEvol sysCov input present
-    predMu   = mu prevPred
-    predCov  = unSym . cov $ prevPred
+    (predMu, predCov') = runEKFPrediction sysEvol linEvol sysCov input (curMu, curCov')
+    predCov  = unSym predCov'
 
-    gkMat = curCov <> tr lin <> inv predCov
+    gkMat = curCov <> tr lin <> unsafeInv predCov
     lin   = linEvol input curMu
 
 
@@ -594,47 +567,35 @@ runKS
   => (a -> R n -> Sq n) -- ^ Linear system evolution at a point
   -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
   -> a                  -- ^ Dynamical input
-  -> MultiNormal (R n)  -- ^ Future smoothed estimate
-  -> MultiNormal (R n)  -- ^ Present filtered estimate
-  -> MultiNormal (R n)  -- ^ Present smoothed estimate
+  -> (R n, Sym n)       -- ^ Future smoothed estimate
+  -> (R n, Sym n)       -- ^ Present filtered estimate
+  -> (R n, Sym n)       -- ^ Present smoothed estimate
 runKS linEvol =
   runEKS (\inp sys -> linEvol inp sys #> sys) linEvol
-
--- runKS linEvol sysCov input future present =
---   runEKS
---   (\inp sys -> linEvol inp sys #> sys)
---   linEvol
---   sysCov
---   input
---   future
---   present
 
 -- | Unscented Kalman smoother
 runUKS
   :: (KnownNat n)
-  => (a -> R n -> R n)  -- ^ System evolution function
-  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
-  -> a                  -- ^ Dynamical input
-  -> MultiNormal (R n)  -- ^ Future smoothed estimate
-  -> MultiNormal (R n)  -- ^ Present filtered estimate
-  -> MultiNormal (R n)  -- ^ Present smoothed estimate
-runUKS evolve sysCov input future present =
-  MultiNormal smMu smCov
+  => (a -> R n -> R n) -- ^ System evolution function
+  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise
+  -> a                 -- ^ Dynamical input
+  -> (R n, Sym n)      -- ^ Future smoothed estimate
+  -> (R n, Sym n)      -- ^ Present filtered estimate
+  -> (R n, Sym n)      -- ^ Present smoothed estimate
+runUKS evolve sysCov input (futMu, futCov') (curMu, curCov') =
+  (smMu, smCov)
   where
     smMu  = curMu + gkMat #> (futMu - predMu)
     smCov = sym $ curCov + gkMat <> (futCov - predCov) <> tr gkMat
 
-    futMu  = mu future
-    futCov = unSym . cov $ future
+    futCov = unSym futCov'
 
-    curMu  = mu present
-    curCov = unSym . cov $ present
+    curCov = unSym curCov'
 
-    prevPred = runUKFPrediction evolve sysCov input present
-    predMu   = mu prevPred
-    predCov  = unSym . cov $ prevPred
+    (predMu, predCov') = runUKFPrediction evolve sysCov input (curMu, curCov')
+    predCov  = unSym predCov'
 
-    gkMat = dkMat <> inv predCov
+    gkMat = dkMat <> unsafeInv predCov
 
     dkMat = sum $
             zipWith (\pres fut ->
@@ -642,10 +603,13 @@ runUKS evolve sysCov input future present =
                     )
             sigmaPoints sigmaPoints'
 
-    sqCov   = chol $ cov present
+    sqCov   = chol predCov'
     sqRows = map (* sqrt 3) $ toRows sqCov
     sigmaPoints = map (curMu +) sqRows ++ map (curMu -) sqRows -- 2n points
     sigmaPoints' = map (evolve input) sigmaPoints
 
     -- hand tuned weights, more exlanation required
     weightCM = 1 / 6
+
+unsafeInv :: KnownNat n => Sq n -> Sq n
+unsafeInv m = fromJust $ linSolve m eye
