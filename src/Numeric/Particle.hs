@@ -105,9 +105,10 @@
 --
 -- First let's set the time step and the acceleration caused by earth's gravity.
 --
--- > {-# LANGUAGE DataKinds #-}
+-- > {-# LANGUAGE DataKinds      #-}
 -- >
 -- > import Numeric.Kalman
+-- > import Numeric.Particle
 -- >
 -- > deltaT, g :: Double
 -- > deltaT = 0.01
@@ -177,10 +178,18 @@
 --
 -- <<diagrams/src_Numeric_Particle_diagUP.svg#diagram=diagUP&height=600&width=500>>
 --
+-- And also plot the results
+--
+-- <<diagrams/src_Numeric_Particle_diagV.svg#diagram=diagV&height=600&width=500>>
+--
 -- === Code for Plotting
 --
 -- The full code for plotting the results:
 --
+-- > {-# LANGUAGE ExplicitForAll #-}
+-- > {-# LANGUAGE TypeOperators  #-}
+-- > {-# LANGUAGE DataKinds      #-}
+-- >
 -- > import qualified Graphics.Rendering.Chart as C
 -- > import Graphics.Rendering.Chart.Backend.Diagrams
 -- > import Data.Colour
@@ -192,6 +201,15 @@
 -- > import System.IO hiding ( hGetContents )
 -- > import Data.ByteString.Lazy ( hGetContents )
 -- > import qualified Data.Vector as V
+-- >
+-- > import           Data.Random.Distribution.Static.MultivariateNormal ( Normal(..) )
+-- > import qualified Data.Random as R
+-- > import           Data.Random.Source.PureMT ( pureMT )
+-- > import           Control.Monad.State ( evalState, replicateM )
+-- >
+-- > import Data.List ( transpose )
+-- >
+-- > import GHC.TypeLits ( KnownNat )
 -- >
 -- > import Numeric.LinearAlgebra.Static
 -- >
@@ -259,6 +277,128 @@
 -- >       let acts = V.toList $ V.map snd generatedSamples
 -- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
 -- >       let charte = chartEstimated "Unscented Kalman Filter"
+-- >                                   (zip [0,1..] acts)
+-- >                                   (zip [0,1..] obs)
+-- >                                   (zip [0,1..] nus)
+-- >       return $ fst $ runBackend denv (C.render charte (600, 500))
+-- >
+-- > data SystemState a = SystemState { x1  :: a, x2  :: a }
+-- >   deriving Show
+-- >
+-- > newtype SystemObs a = SystemObs { y1  :: a }
+-- >   deriving Show
+-- >
+-- > (.+), (.*), (.-) :: (Num a) => V.Vector a -> V.Vector a -> V.Vector a
+-- > (.+) = V.zipWith (+)
+-- > (.*) = V.zipWith (*)
+-- > (.-) = V.zipWith (-)
+-- >
+-- > initParticles :: R.MonadRandom m =>
+-- >                  m (Particles (SystemState Double))
+-- > initParticles = V.replicateM nParticles $ do
+-- >   r <- R.sample $ R.rvar (Normal m0 bigP)
+-- >   let x1 = fst $ headTail r
+-- >       x2 = fst $ headTail $ snd $ headTail r
+-- >   return $ SystemState { x1 = x1, x2 = x2}
+-- >
+-- > stateUpdateP :: Particles (SystemState Double) ->
+-- >                 Particles (SystemState Double)
+-- > stateUpdateP xPrevs = V.zipWith SystemState x1s x2s
+-- >   where
+-- >     ix = V.length xPrevs
+-- >
+-- >     x1Prevs = V.map x1 xPrevs
+-- >     x2Prevs = V.map x2 xPrevs
+-- >
+-- >     deltaTs = V.replicate ix deltaT
+-- >     gs = V.replicate ix g
+-- >     x1s = x1Prevs .+ (x2Prevs .* deltaTs)
+-- >     x2s = x2Prevs .- (gs .* (V.map sin x1Prevs) .* deltaTs)
+-- >
+-- > stateUpdateNoisy :: R.MonadRandom m =>
+-- >                     Sym 2 ->
+-- >                     Particles (SystemState Double) ->
+-- >                     m (Particles (SystemState Double))
+-- > stateUpdateNoisy bigQ xPrevs = do
+-- >   let xs = stateUpdateP xPrevs
+-- >
+-- >       x1s = V.map x1 xs
+-- >       x2s = V.map x2 xs
+-- >
+-- >   let ix = V.length xPrevs
+-- >   etas <- replicateM ix $ R.sample $ R.rvar (Normal 0.0 bigQ)
+-- >
+-- >   let eta1s, eta2s :: V.Vector Double
+-- >       eta1s = V.fromList $ map (fst . headTail) etas
+-- >       eta2s = V.fromList $ map (fst . headTail . snd . headTail) etas
+-- >
+-- >   return (V.zipWith SystemState (x1s .+ eta1s) (x2s .+ eta2s))
+-- >
+-- > obsUpdate :: Particles (SystemState Double) ->
+-- >              Particles (SystemObs Double)
+-- > obsUpdate xs = V.map (SystemObs . sin . x1) xs
+-- >
+-- > weight :: forall a n . KnownNat n =>
+-- >           (a -> R n) ->
+-- >           Sym n ->
+-- >           a -> a -> Double
+-- > weight f bigR obs obsNew = R.pdf (Normal (f obsNew) bigR) (f obs)
+-- >
+-- > runFilter :: Particles (SystemObs Double) -> V.Vector (Particles (SystemState Double))
+-- > runFilter pendulumSamples = evalState action (pureMT 19)
+-- >   where
+-- >     action = do
+-- >       xs <- initParticles
+-- >       scanMapM
+-- >         (runPF (stateUpdateNoisy bigQ) obsUpdate (weight f bigR))
+-- >         return
+-- >         xs
+-- >         pendulumSamples
+-- >
+-- > testSmoothing :: Particles (SystemObs Double) -> Int -> [Double]
+-- > testSmoothing ss n = V.toList $ evalState action (pureMT 23)
+-- >   where
+-- >     action = do
+-- >       xss <- V.replicateM n $ oneSmoothingPath (stateUpdateNoisy bigQ) (weight h bigQ) nParticles (runFilter ss)
+-- >       let yss = V.fromList $ map V.fromList $
+-- >                 transpose $
+-- >                 V.toList $ V.map (V.toList) $
+-- >                 xss
+-- >       return $ V.map (/ (fromIntegral n)) $ V.map V.sum $ V.map (V.map x1) yss
+-- >
+-- > nObs :: Int
+-- > nObs = 200
+-- >
+-- > nParticles :: Int
+-- > nParticles = 1000
+-- >
+-- > type PendulumState = R 2
+-- >
+-- > m0 :: PendulumState
+-- > m0 = vector [1.6, 0]
+-- >
+-- > bigP :: Sym 2
+-- > bigP = sym $ diag 0.1
+-- >
+-- > f :: SystemObs Double -> R 1
+-- > f = vector . pure . y1
+-- >
+-- > h :: SystemState Double -> R 2
+-- > h u = vector [x1 u , x2 u]
+-- >
+-- > diagV = do
+-- >   h <- openFile "matlabRNGs.csv" ReadMode
+-- >   cs <- hGetContents h
+-- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
+-- >   case df of
+-- >     Left _ -> error "Whatever"
+-- >     Right generatedSamples -> do
+-- >       let preObs = V.take nObs $ V.map fst generatedSamples
+-- >       let obs = V.toList preObs
+-- >       let acts = V.toList $ V.take nObs $ V.map snd generatedSamples
+-- >       let nus = take nObs (testSmoothing (V.map SystemObs preObs) 50)
+-- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
+-- >       let charte = chartEstimated "Particle Smoother"
 -- >                                   (zip [0,1..] acts)
 -- >                                   (zip [0,1..] obs)
 -- >                                   (zip [0,1..] nus)
