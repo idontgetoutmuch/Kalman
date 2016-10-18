@@ -6,7 +6,9 @@
 -- Maintainer  :  dominic@steinitz.org
 --
 -- =The Theory
--- The model for the particle filter is given by
+--
+-- The particle filter, `runPF`, in this library is applicable to the
+-- state space model given by
 --
 -- \[
 -- \begin{aligned}
@@ -31,30 +33,18 @@
 -- distributed random variables with mean 0 represent the fact that
 -- the observations are noisy: \(\boldsymbol{\upsilon}_{i} \sim {\cal{N}}(0,R_i)\).
 --
--- Note that in most presentations of the Kalman filter (the
--- [wikipedia](https://en.wikipedia.org/wiki/Kalman_filter)
--- presentation being an exception), the state update function and the
--- observation function are taken to be constant over time as is the
--- noise for the state and the noise for
--- the observation. In symbols, \(\forall i \, \boldsymbol{a}_i = \boldsymbol{a}\)
--- for some \(\boldsymbol{a}\), \(\forall i \, \boldsymbol{h}_i = \boldsymbol{h}\)
--- for some \(\boldsymbol{h}\),
--- \(\forall i \, Q_i = Q\) for some \(Q\) and \(\forall i \, \boldsymbol{a}_i = R\)
--- for some \(R\).
+-- Clearly this could be generalised further; anyone wishing for such
+-- a generalisation is encouraged to contribute to the library.
 --
--- We assume the whole process starts at 0 with our belief of the state (aka the
--- prior state) being given by
--- \(\boldsymbol{x}_0 \sim {\cal{N}}(\boldsymbol{\mu}_0, \Sigma_0)\)
---
--- The Kalman filtering process is a recursive procedure as follows:
---
--- (1) Make a prediction of the current system state, given our previous
--- estimation of the system state.
---
--- (2) Update our prediction, given a newly acquired measurement.
---
--- The prediction and update steps depend on our system and measurement
--- models, as well as our current estimate of the system state.
+-- The smoother, `oneSmoothingPath` implements [Forward filtering /
+-- backward
+-- smoothing](https://en.wikipedia.org/wiki/Particle_filter#Backward_particle_smoothers)
+-- and returns just one path from the particle filter; in most cases,
+-- this will need to be run many times to provide good estimates of
+-- the past. Note that `oneSmoothingPath` uses /all/ observation up
+-- until the current time. This could be generalised to select only a
+-- window of observations up to the current time. Again, contributions
+-- to implement this generalisation are welcomed.
 --
 -- = An Extended Example
 --
@@ -105,14 +95,14 @@
 --
 -- First let's set the time step and the acceleration caused by earth's gravity.
 --
--- > {-# LANGUAGE DataKinds      #-}
+-- > {-# LANGUAGE DataKinds #-}
 -- >
--- > import Numeric.Kalman
 -- > import Numeric.Particle
 -- >
 -- > deltaT, g :: Double
 -- > deltaT = 0.01
 -- > g  = 9.81
+-- >
 -- > bigQ :: Sym 2
 -- > bigQ = sym $ matrix bigQl
 -- >
@@ -126,59 +116,65 @@
 -- >
 -- > bigR :: Sym 1
 -- > bigR  = sym $ matrix [0.1]
--- > stateUpdate :: R 2 -> R 2
--- > stateUpdate u =  vector [x1 + x2 * deltaT, x2 - g * (sin x1) * deltaT]
--- >   where
--- >     (x1, w) = headTail u
--- >     (x2, _) = headTail w
 -- >
--- > observe :: R 2 -> R 1
--- > observe a = vector [sin x] where x = fst $ headTail a
--- > linearizedObserve :: R 2 -> L 1 2
--- > linearizedObserve a = matrix [cos x, 0.0] where x = fst $ headTail a
+-- > data SystemState a = SystemState { x1  :: a, x2  :: a }
+-- >   deriving Show
 -- >
--- > linearizedStateUpdate :: R 2 -> Sq 2
--- > linearizedStateUpdate u = matrix [1.0,                    deltaT,
--- >                                   -g * (cos x1) * deltaT,    1.0]
+-- > newtype SystemObs a = SystemObs { y1  :: a }
+-- >   deriving Show
+-- >
+--
+-- Bar
+--
+-- > {-# LANGUAGE DataKinds #-}
+-- >
+-- > m0 :: PendulumState
+-- > m0 = vector [1.6, 0]
+-- >
+-- > bigP :: Sym 2
+-- > bigP = sym $ diag 0.1
+-- >
+-- > initParticles :: R.MonadRandom m =>
+-- >                  m (Particles (SystemState Double))
+-- > initParticles = V.replicateM nParticles $ do
+-- >   r <- R.sample $ R.rvar (Normal m0 bigP)
+-- >   let x1 = fst $ headTail r
+-- >       x2 = fst $ headTail $ snd $ headTail r
+-- >   return $ SystemState { x1 = x1, x2 = x2}
+-- >
+-- > nObs :: Int
+-- > nObs = 35
+-- >
+-- > nParticles :: Int
+-- > nParticles = 20
+-- >
+-- > (.+), (.*), (.-) :: (Num a) => V.Vector a -> V.Vector a -> V.Vector a
+-- > (.+) = V.zipWith (+)
+-- > (.*) = V.zipWith (*)
+-- > (.-) = V.zipWith (-)
+-- >
+-- > stateUpdateP :: Particles (SystemState Double) ->
+-- >                 Particles (SystemState Double)
+-- > stateUpdateP xPrevs = V.zipWith SystemState x1s x2s
 -- >   where
--- >     (x1, _) = headTail u
---
--- Now we can create extended and unscented filters which consume a
--- single observation.
---
--- > singleEKF = runEKF (const observe) (const linearizedObserve) (const bigR)
--- >              (const stateUpdate) (const linearizedStateUpdate) (const bigQ)
--- >              undefined
---
--- > singleUKF = runUKF (const observe) (const bigR) (const stateUpdate) (const bigQ)
--- >              undefined
+-- >     ix = V.length xPrevs
+-- >
+-- >     x1Prevs = V.map x1 xPrevs
+-- >     x2Prevs = V.map x2 xPrevs
+-- >
+-- >     deltaTs = V.replicate ix deltaT
+-- >     gs = V.replicate ix g
+-- >     x1s = x1Prevs .+ (x2Prevs .* deltaTs)
+-- >     x2s = x2Prevs .- (gs .* (V.map sin x1Prevs) .* deltaTs)
 --
 -- We start off not too far from the actual value.
---
--- > initialDist =  (vector [1.6, 0.0],
--- >                 sym $ matrix [0.1, 0.0,
--- >                               0.0, 0.1])
 --
 -- Using some data generated using code made available with Simo
 -- Särkkä's
 -- [book](http://www.cambridge.org/gb/academic/subjects/statistics-probability/applied-probability-and-stochastic-networks/bayesian-filtering-and-smoothing),
 -- we can track the pendulum using the extended Kalman filter.
 --
--- > multiEKF obs = scanl singleEKF initialDist (map (vector . pure) obs)
---
--- And then plot the results.
---
--- <<diagrams/src_Numeric_Particle_diagEP.svg#diagram=diagEP&height=600&width=500>>
---
--- And also track it using the unscented Kalman filter.
---
--- > multiUKF obs = scanl singleUKF initialDist (map (vector . pure) obs)
---
--- And also plot the results
---
--- <<diagrams/src_Numeric_Particle_diagUP.svg#diagram=diagUP&height=600&width=500>>
---
--- And also plot the results
+-- AND also plot the results
 --
 -- <<diagrams/src_Numeric_Particle_diagV.svg#diagram=diagV&height=600&width=500>>
 --
@@ -246,75 +242,6 @@
 -- >            $ C.layout_x_axis . C.laxis_override .~ C.axisGridHide
 -- >            $ def
 -- >
--- > diagEP = do
--- >   h <- openFile "matlabRNGs.csv" ReadMode
--- >   cs <- hGetContents h
--- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
--- >   case df of
--- >     Left _ -> error "Whatever"
--- >     Right generatedSamples -> do
--- >       let xs = take 500 (multiEKF $ V.toList $ V.map fst generatedSamples)
--- >       let mus = map (fst . headTail . fst) xs
--- >       let obs = V.toList $ V.map fst generatedSamples
--- >       let acts = V.toList $ V.map snd generatedSamples
--- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
--- >       let charte = chartEstimated "Extended Kalman Filter"
--- >                                   (zip [0,1..] acts)
--- >                                   (zip [0,1..] obs)
--- >                                   (zip [0,1..] mus)
--- >       return $ fst $ runBackend denv (C.render charte (600, 500))
--- >
--- > diagUP = do
--- >   h <- openFile "matlabRNGs.csv" ReadMode
--- >   cs <- hGetContents h
--- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
--- >   case df of
--- >     Left _ -> error "Whatever"
--- >     Right generatedSamples -> do
--- >       let ys = take 500 (multiUKF $ V.toList $ V.map fst generatedSamples)
--- >       let nus = map (fst . headTail . fst) ys
--- >       let obs = V.toList $ V.map fst generatedSamples
--- >       let acts = V.toList $ V.map snd generatedSamples
--- >       denv <- defaultEnv C.vectorAlignmentFns 600 500
--- >       let charte = chartEstimated "Unscented Kalman Filter"
--- >                                   (zip [0,1..] acts)
--- >                                   (zip [0,1..] obs)
--- >                                   (zip [0,1..] nus)
--- >       return $ fst $ runBackend denv (C.render charte (600, 500))
--- >
--- > data SystemState a = SystemState { x1  :: a, x2  :: a }
--- >   deriving Show
--- >
--- > newtype SystemObs a = SystemObs { y1  :: a }
--- >   deriving Show
--- >
--- > (.+), (.*), (.-) :: (Num a) => V.Vector a -> V.Vector a -> V.Vector a
--- > (.+) = V.zipWith (+)
--- > (.*) = V.zipWith (*)
--- > (.-) = V.zipWith (-)
--- >
--- > initParticles :: R.MonadRandom m =>
--- >                  m (Particles (SystemState Double))
--- > initParticles = V.replicateM nParticles $ do
--- >   r <- R.sample $ R.rvar (Normal m0 bigP)
--- >   let x1 = fst $ headTail r
--- >       x2 = fst $ headTail $ snd $ headTail r
--- >   return $ SystemState { x1 = x1, x2 = x2}
--- >
--- > stateUpdateP :: Particles (SystemState Double) ->
--- >                 Particles (SystemState Double)
--- > stateUpdateP xPrevs = V.zipWith SystemState x1s x2s
--- >   where
--- >     ix = V.length xPrevs
--- >
--- >     x1Prevs = V.map x1 xPrevs
--- >     x2Prevs = V.map x2 xPrevs
--- >
--- >     deltaTs = V.replicate ix deltaT
--- >     gs = V.replicate ix g
--- >     x1s = x1Prevs .+ (x2Prevs .* deltaTs)
--- >     x2s = x2Prevs .- (gs .* (V.map sin x1Prevs) .* deltaTs)
--- >
 -- > stateUpdateNoisy :: R.MonadRandom m =>
 -- >                     Sym 2 ->
 -- >                     Particles (SystemState Double) ->
@@ -366,19 +293,7 @@
 -- >                 xss
 -- >       return $ V.map (/ (fromIntegral n)) $ V.map V.sum $ V.map (V.map x1) yss
 -- >
--- > nObs :: Int
--- > nObs = 200
--- >
--- > nParticles :: Int
--- > nParticles = 1000
--- >
 -- > type PendulumState = R 2
--- >
--- > m0 :: PendulumState
--- > m0 = vector [1.6, 0]
--- >
--- > bigP :: Sym 2
--- > bigP = sym $ diag 0.1
 -- >
 -- > f :: SystemObs Double -> R 1
 -- > f = vector . pure . y1
@@ -413,9 +328,9 @@
 module Numeric.Particle (
     runPF
   , oneSmoothingPath
-  , oneSmoothingStep
-  , scanMapM
-  , Particles ) where
+  , Particles
+  , Path
+  ) where
 
 import           Data.Random hiding ( StdNormal, Normal )
 import           Control.Monad
@@ -423,8 +338,8 @@ import qualified Data.Vector as V
 import           Data.Vector ( Vector )
 import           Data.Bits ( shiftR )
 
-type Particles a = Vector a
-type Path a      = Vector a
+type Particles a = Vector a -- ^ As an aid for the reader
+type Path a      = Vector a -- ^ As an aid for the reader
 
 runPF
   :: MonadRandom m
