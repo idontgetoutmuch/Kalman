@@ -10,7 +10,7 @@
 --
 -- \[
 -- \begin{aligned}
--- \boldsymbol{x}_i &= \boldsymbol{a}_i(\boldsymbol{x}_{i-1}) + \boldsymbol{\psi}_{i-1} \\
+-- \boldsymbol{x}_i &= \boldsymbol{a}_i(\boldsymbol{x}_{i-1}, \boldsymbol{u}_{i-1}) + \boldsymbol{\psi}_{i-1} \\
 -- \boldsymbol{y}_i &= \boldsymbol{h}_i(\boldsymbol{x}_i) + \boldsymbol{\upsilon}_i
 -- \end{aligned}
 -- \]
@@ -20,12 +20,18 @@
 -- * \(\boldsymbol{a_i}\)\ is some non-linear vector-valued possibly
 -- time-varying state update function.
 --
+-- * \(\boldsymbol{x_i}\) is the state at time \(i\).
+--
+-- * \(\boldsymbol{u_i}\) is the control at time \(i\).
+--
 -- * \(\boldsymbol{\psi}_{i}\) are independent normally
 -- distributed random variables with mean 0 representing the fact that
 -- the state update is noisy: \(\boldsymbol{\psi}_{i} \sim {\cal{N}}(0,Q_i)\).
 --
 -- * \(\boldsymbol{h}_i\)\ is some non-linear vector-valued possibly time-varying
 -- function describing how we observe the hidden state process.
+--
+-- * \(\boldsymbol{y_i}\) is the observable at time \(i\).
 --
 -- * \(\boldsymbol{\upsilon}_i\) are independent normally
 -- distributed random variables with mean 0 represent the fact that
@@ -229,7 +235,7 @@
 -- >            $ def
 -- >
 -- > diagE = do
--- >   h <- openFile "matlabRNGs.csv" ReadMode
+-- >   h <- openFile "data/matlabRNGs.csv" ReadMode
 -- >   cs <- hGetContents h
 -- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
 -- >   case df of
@@ -247,7 +253,7 @@
 -- >       return $ fst $ runBackend denv (C.render charte (600, 500))
 -- >
 -- > diagU = do
--- >   h <- openFile "matlabRNGs.csv" ReadMode
+-- >   h <- openFile "data/matlabRNGs.csv" ReadMode
 -- >   cs <- hGetContents h
 -- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
 -- >   case df of
@@ -299,10 +305,13 @@ import Data.Maybe ( fromJust )
 -- state from the previous estimate.
 runEKFPrediction
   :: KnownNat n
-  => (a -> R n -> R n)  -- ^ System evolution function \(\boldsymbol{a}_n(s)\)
-  -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point \(\frac{\partial \boldsymbol{a}_n}{\partial s}\big|_s\)
+  => (a -> R n -> R n)  -- ^ System evolution function
+                        -- \(\boldsymbol{a}_i(\boldsymbol{u}_{i-1}, \boldsymbol{x}_{i-1})\).
+                        -- Note the order of the control and the
+                        -- input.
+  -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point \(\frac{\partial \boldsymbol{a}_i}{\partial \boldsymbol{x}}\big|_{\boldsymbol{u}_{i-1}, \boldsymbol{x}_{i-1}}\)
   -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise \(Q_n\)
-  -> a                  -- ^ Dynamical input \(n\)
+  -> a                  -- ^ Dynamical input \(\boldsymbol{u}_{i-1}\)
   -> (R n, Sym n)       -- ^ Current estimate \((\hat{\boldsymbol{x}}_{n-1}, \hat{\boldsymbol{\Sigma}}_{n-1})\)
   -> (R n, Sym n)       -- ^ New prediction \((\hat{\boldsymbol{x}}_n, \hat{\boldsymbol{\Sigma}}_n)\)
 
@@ -316,10 +325,15 @@ runEKFPrediction evolve linEvol sysCov input (estMu, estCov) =
 runKFPrediction
   :: (KnownNat n)
   => (a -> R n -> Sq n) -- ^ Linear system evolution at a point
-  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
-  -> a                  -- ^ Dynamical input
+                        -- \(\boldsymbol{a}_i(\boldsymbol{u}_{i-1}, \boldsymbol{x}_{i-1})\).
+                        -- Note the order of the control and the
+                        -- input.
+  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise \(Q_i\).
+  -> a                  -- ^ Dynamical input \(\boldsymbol{u}_{i-1}\).
   -> (R n, Sym n)       -- ^ Current estimate
+                        -- \((\hat{\boldsymbol{x}}_{n-1}, \hat{\boldsymbol{\Sigma}}_{n-1})\).
   -> (R n, Sym n)       -- ^ New prediction
+                        -- \((\hat{\boldsymbol{x}}_n, \hat{\boldsymbol{\Sigma}}_n)\).
 runKFPrediction linEvol =
   runEKFPrediction (\inp sys -> linEvol inp sys #> sys) linEvol
 
