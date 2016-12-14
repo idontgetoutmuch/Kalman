@@ -93,7 +93,11 @@
 --
 -- where \(r_i \sim {\mathcal{N}}(0,R)\).
 --
--- First let's set the time step and the acceleration caused by earth's gravity.
+--
+-- First let's set the time step and the acceleration caused by
+-- earth's gravity and the covariance matrices for the state and
+-- observation.
+--
 --
 -- > {-# LANGUAGE DataKinds #-}
 -- >
@@ -101,7 +105,7 @@
 -- >
 -- > deltaT, g :: Double
 -- > deltaT = 0.01
--- > g  = 9.81
+-- > g      = 9.81
 -- >
 -- > bigQ :: Sym 2
 -- > bigQ = sym $ matrix bigQl
@@ -115,7 +119,7 @@
 -- >         ]
 -- >
 -- > bigR :: Sym 1
--- > bigR  = sym $ matrix [0.1]
+-- > bigR  = sym $ matrix [0.2]
 -- >
 -- > data SystemState a = SystemState { x1  :: a, x2  :: a }
 -- >   deriving Show
@@ -124,7 +128,11 @@
 -- >   deriving Show
 -- >
 --
--- Bar
+-- We use the data generated using code made available with Simo
+-- Särkkä's
+-- [book](http://www.cambridge.org/gb/academic/subjects/statistics-probability/applied-probability-and-stochastic-networks/bayesian-filtering-and-smoothing)
+-- which starts with an angle of 1.5 radians and an angular velocity
+-- of 0.0 radians per second. We set our prior to have a mean of 1.6, not too far from the actual value.
 --
 -- > {-# LANGUAGE DataKinds #-}
 -- >
@@ -143,7 +151,7 @@
 -- >   return $ SystemState { x1 = x1, x2 = x2}
 -- >
 -- > nObs :: Int
--- > nObs = 35
+-- > nObs = 200
 -- >
 -- > nParticles :: Int
 -- > nParticles = 20
@@ -167,14 +175,6 @@
 -- >     x1s = x1Prevs .+ (x2Prevs .* deltaTs)
 -- >     x2s = x2Prevs .- (gs .* (V.map sin x1Prevs) .* deltaTs)
 --
--- We start off not too far from the actual value.
---
--- Using some data generated using code made available with Simo
--- Särkkä's
--- [book](http://www.cambridge.org/gb/academic/subjects/statistics-probability/applied-probability-and-stochastic-networks/bayesian-filtering-and-smoothing),
--- we can track the pendulum using the extended Kalman filter.
---
--- AND also plot the results
 --
 -- <<diagrams/src_Numeric_Particle_diagV.svg#diagram=diagV&height=600&width=500>>
 --
@@ -302,7 +302,7 @@
 -- > h u = vector [x1 u , x2 u]
 -- >
 -- > diagV = do
--- >   h <- openFile "matlabRNGs.csv" ReadMode
+-- >   h <- openFile "data/matlabRNGs.csv" ReadMode
 -- >   cs <- hGetContents h
 -- >   let df = (decode NoHeader cs) :: Either String (V.Vector (Double, Double))
 -- >   case df of
@@ -344,11 +344,17 @@ type Path a      = Vector a -- ^ As an aid for the reader
 runPF
   :: MonadRandom m
   => (Particles a -> m (Particles a)) -- ^ System evolution at a point
-  -> (Particles a -> Particles b)     -- ^ Measurement operator at a point
-  -> (b -> b -> Double)               -- ^ Observation probability density function
+                                      -- \(\boldsymbol{a}_i(\boldsymbol{x})\)
+  -> (Particles a -> Particles b)     -- ^ Measurement operator at a point \(\boldsymbol{h}_i\)
+  -> (b -> b -> Double)               -- ^ Observation probability density function \(p(\boldsymbol{y}_k|\boldsymbol{x}^{(i)}_k)\)
   -> Particles a                      -- ^ Current estimate
-  -> b                                -- ^ New measurement
+                                      -- \(\big\{\big(w^{(i)}_k, \boldsymbol{x}^{(i)}_k\big) : i \in \{1,\ldots,N\}\big\}\)
+                                      -- where \(N\) is the number of particles
+  -> b                                -- ^ New measurement \(\boldsymbol{y}_i\)
   -> m (Particles a)                  -- ^ New estimate
+                                      -- \(\big\{\big(w^{(i)}_{k+1}, \boldsymbol{x}^{(i)}_{k+1}\big) : i \in \{1,\ldots,N\}\big\}\)
+                                      -- where \(N\) is the number of particles
+
 runPF stateUpdate obsUpdate weight statePrevs obs = do
   stateNews <- stateUpdate statePrevs
   let obsNews = obsUpdate stateNews
@@ -364,10 +370,14 @@ runPF stateUpdate obsUpdate weight statePrevs obs = do
 oneSmoothingPath
   :: MonadRandom m
   => (Particles a -> m (Particles a)) -- ^ System evolution at a point
-  -> (a -> a -> Double) -- ^ State probability density function
-  -> Int
-  -> (Vector (Particles a))
+                                      -- \(\boldsymbol{a}_i(\boldsymbol{x})\)
+  -> (a -> a -> Double)               -- ^ State probability density function \(p(\boldsymbol{x}^{(i)}_k|\boldsymbol{x}^{(i)}_{k-1})\)
+  -> Int                              -- ^ Number of particles \(N\)
+  -> (Vector (Particles a))           -- ^ Filtering estimates
+                                      -- \(\bigg\{\big\{\big(w^{(i)}_{k+1}, \boldsymbol{x}^{(i)}_{k+1}\big) : i \in \{1,\ldots,N\}\big\} : k \in \{1,\ldots,T\}\bigg\}\)
+                                      -- where \(T\) is the number of timesteps
   -> m (Path a)
+                                      -- ^ A path for the smoothed particle \(\{\boldsymbol{x}_k : k \in T\}\) where \(T\) is the number of timesteps
 oneSmoothingPath stateUpdate weight nParticles filterEstss = do
   let ys = filterEstss
   ix <- sample $ uniform 0 (nParticles - 1)

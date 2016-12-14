@@ -398,7 +398,7 @@ runEKF
   -> a                   -- ^ Dynamical input \(\boldsymbol{u}_{i-1}\)
   -> (R n, Sym n)        -- ^ Current estimate
                          -- \((\hat{\boldsymbol{x}}_{i-1}, \hat{\boldsymbol{\Sigma}}_{i-1})\)
-  -> R m                 -- ^ New measurement  \(\boldsymbol{y}_i\)
+  -> R m                 -- ^ New measurement \(\boldsymbol{y}_i\)
   -> (R n, Sym n)        -- ^ New (filtered) estimate \((\hat{\boldsymbol{x}}_i, \hat{\boldsymbol{\Sigma}}_i)\)
 runEKF measure linMeas measCov
   evolve linEvol sysCov
@@ -434,10 +434,13 @@ runKF linMeas measCov
 runUKFPrediction
   :: KnownNat n
   => (a -> R n -> R n) -- ^ System evolution function at a point
-  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise
-  -> a                 -- ^ Dynamical input
-  -> (R n, Sym n)      -- ^ Current estimate
-  -> (R n, Sym n)      -- ^ Prediction
+                       -- \(\boldsymbol{a}_i(\boldsymbol{u}, \boldsymbol{x})\),
+                       -- note the order of the control and the
+                       -- input
+  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise \(Q_i\)
+  -> a                 -- ^ Dynamical input \(\boldsymbol{u}_{i-1}\)
+  -> (R n, Sym n)      -- ^ Current estimate \((\hat{\boldsymbol{x}}_{n-1}, \hat{\boldsymbol{\Sigma}}_{n-1})\)
+  -> (R n, Sym n)      -- ^ Prediction \(({\boldsymbol{x}_i^\flat}, {\boldsymbol{\Sigma}_i^\flat})\)
 
 runUKFPrediction evolve sysCov input (estMu, estCov) =
   (predMu, predCov)
@@ -467,12 +470,12 @@ runUKFPrediction evolve sysCov input (estMu, estCov) =
 
 runUKFUpdate
   :: (KnownNat n, KnownNat m)
-  => (a -> R n -> R m) -- ^ Measurement transformation
-  -> (a -> Sym m)      -- ^ Covariance matrix encoding measurement noise
-  -> a                 -- ^ Dynamical input
-  -> (R n, Sym n)      -- ^ Current prediction
-  -> R m               -- ^ New measurement
-  -> (R n, Sym n)      -- ^ Updated prediction
+  => (a -> R n -> R m) -- ^ Measurement transformation \(\boldsymbol{h}_i\)
+  -> (a -> Sym m)      -- ^ Covariance matrix encoding measurement noise \(R_i\)
+  -> a                 -- ^ Dynamical input \(\boldsymbol{u}_{i-1}\)
+  -> (R n, Sym n)      -- ^ Current prediction \(({\boldsymbol{x}}_i^\flat, {\boldsymbol{\Sigma}}_i^\flat)\)
+  -> R m               -- ^ New measurement \(\boldsymbol{y}_i\)
+  -> (R n, Sym n)      -- ^ Updated prediction \((\hat{\boldsymbol{x}}_i, \hat{\boldsymbol{\Sigma}}_i)\)
 
 runUKFUpdate measure measCov input (predMu, predCov) newMeas =
   (newMu, newCov)
@@ -513,14 +516,18 @@ runUKFUpdate measure measCov input (predMu, predCov) newMeas =
 
 runUKF
   :: (KnownNat m, KnownNat n)
-  => (a -> R n -> R m) -- ^ System measurement function
-  -> (a -> Sym m)      -- ^ Covariance matrix encoding measurement noise
+  => (a -> R n -> R m) -- ^ System measurement function \(\boldsymbol{h}_i\)
+  -> (a -> Sym m)      -- ^ Covariance matrix encoding measurement noise \(R_i\)
   -> (a -> R n -> R n) -- ^ System evolution function
-  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise
-  -> a                 -- ^ Dynamical input
+                       -- \(\boldsymbol{a}_i(\boldsymbol{u}, \boldsymbol{x})\),
+                       -- note the order of the control and the
+                       -- input
+  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise \(Q_i\)
+  -> a                 -- ^ Dynamical input \(\boldsymbol{u}_{i-1}\)
   -> (R n, Sym n)      -- ^ Current estimate
-  -> R m               -- ^ New measurement
-  -> (R n, Sym n)      -- ^ New (filtered) estimate
+                       -- \((\hat{\boldsymbol{x}}_{i-1}, \hat{\boldsymbol{\Sigma}}_{i-1})\)
+  -> R m               -- ^ New measurement \(\boldsymbol{y}_i\)
+  -> (R n, Sym n)      -- ^ New (filtered) estimate \((\hat{\boldsymbol{x}}_i, \hat{\boldsymbol{\Sigma}}_i)\)
 runUKF measure measCov
   evolve sysCov
   input estSys newMeas = updatedEstimate
@@ -550,12 +557,19 @@ runUKF measure measCov
 runEKS
   :: (KnownNat n)
   => (a -> R n -> R n)  -- ^ System evolution function
-  -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point
-  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
-  -> a                  -- ^ Dynamical input
+                        -- \(\boldsymbol{a}_i(\boldsymbol{u}, \boldsymbol{x})\),
+                        -- note the order of the control and the
+                        -- input
+  -> (a -> R n -> Sq n) -- ^ Linearization of the system evolution at a point  \(\frac{\partial \boldsymbol{a}_i}{\partial \boldsymbol{x}}\big|_{{\boldsymbol{u}}, \, {\boldsymbol{x}}}\)
+  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise \(Q_i\)
+  -> a                  -- ^ Dynamical input \(\boldsymbol{u}_{i}\)
   -> (R n, Sym n)       -- ^ Future smoothed estimate
+                        -- \((\bar{\boldsymbol{x}}_{i+1}, \bar{\boldsymbol{\Sigma}}_{i+1})\)
   -> (R n, Sym n)       -- ^ Present filtered estimate
+                        -- \((\hat{\boldsymbol{x}}_{i}, \hat{\boldsymbol{\Sigma}}_{i})\)
   -> (R n, Sym n)       -- ^ Present smoothed estimate
+                        -- \((\bar{\boldsymbol{x}}_{i}, \bar{\boldsymbol{\Sigma}}_{i})\)
+
 
 runEKS sysEvol linEvol sysCov input (futMu, futCov') (curMu, curCov') =
   (smMu, smCov)
@@ -577,11 +591,17 @@ runEKS sysEvol linEvol sysCov input (futMu, futCov') (curMu, curCov') =
 runKS
   :: (KnownNat n)
   => (a -> R n -> Sq n) -- ^ Linear system evolution at a point
-  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise
-  -> a                  -- ^ Dynamical input
+                        -- \(\boldsymbol{a}_i(\boldsymbol{u}, \boldsymbol{x})\),
+                        -- note the order of the control and the
+                        -- input
+  -> (a -> Sym n)       -- ^ Covariance matrix encoding system evolution noise \(Q_i\)
+  -> a                  -- ^ Dynamical input \(\boldsymbol{u}_{i}\)
   -> (R n, Sym n)       -- ^ Future smoothed estimate
+                        -- \((\bar{\boldsymbol{x}}_{i+1}, \bar{\boldsymbol{\Sigma}}_{i+1})\)
   -> (R n, Sym n)       -- ^ Present filtered estimate
+                        -- \((\hat{\boldsymbol{x}}_{i}, \hat{\boldsymbol{\Sigma}}_{i})\)
   -> (R n, Sym n)       -- ^ Present smoothed estimate
+                        -- \((\bar{\boldsymbol{x}}_{i}, \bar{\boldsymbol{\Sigma}}_{i})\)
 runKS linEvol =
   runEKS (\inp sys -> linEvol inp sys #> sys) linEvol
 
@@ -589,11 +609,15 @@ runKS linEvol =
 runUKS
   :: (KnownNat n)
   => (a -> R n -> R n) -- ^ System evolution function
-  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise
-  -> a                 -- ^ Dynamical input
+                       -- \(\boldsymbol{a}_i(\boldsymbol{u}, \boldsymbol{x})\),
+  -> (a -> Sym n)      -- ^ Covariance matrix encoding system evolution noise \(Q_i\)
+  -> a                 -- ^ Dynamical input \(\boldsymbol{u}_{i}\)
   -> (R n, Sym n)      -- ^ Future smoothed estimate
+                        -- \((\bar{\boldsymbol{x}}_{i+1}, \bar{\boldsymbol{\Sigma}}_{i+1})\)
   -> (R n, Sym n)      -- ^ Present filtered estimate
+                        -- \((\hat{\boldsymbol{x}}_{i}, \hat{\boldsymbol{\Sigma}}_{i})\)
   -> (R n, Sym n)      -- ^ Present smoothed estimate
+                       -- \((\bar{\boldsymbol{x}}_{i}, \bar{\boldsymbol{\Sigma}}_{i})\)
 runUKS evolve sysCov input (futMu, futCov') (curMu, curCov') =
   (smMu, smCov)
   where
