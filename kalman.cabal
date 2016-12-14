@@ -1,5 +1,5 @@
-name:                kalman
-version:             1.0.0.1
+|name:                kalman
+version:             1.0.0.2
 synopsis:            Kalman and particle filters and smoothers
 description:         Linear, extended and unscented Kalman filters are provided, along
                      with their corresponding smoothers. Furthermore, a particle filter
@@ -18,7 +18,7 @@ extra-doc-files:     diagrams/*.png, diagrams/*.svg
 
 source-repository head
   type:     git
-  location: https://github.com/fpco/kalman
+  location: https://github.com/idontgetoutmuch/Kalman
 
 library
   default-language:  Haskell2010
