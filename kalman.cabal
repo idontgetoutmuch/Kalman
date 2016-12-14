@@ -1,10 +1,10 @@
 name:                kalman
-version:             1.0.0.0
+version:             1.0.0.1
 synopsis:            Kalman and particle filters and smoothers
 description:         Linear, extended and unscented Kalman filters are provided, along
                      with their corresponding smoothers. Furthermore, a particle filter
                      and smoother is provided.
-homepage:            https://github.com/fpco/kalman
+homepage:            https://github.com/idontgetoutmuch/Kalman
 license:             MIT
 license-file:        LICENSE
 author:              Dominic Steinitz, Jacob West
@@ -26,7 +26,7 @@ library
   exposed-modules:   Numeric.Kalman,
                      Numeric.Particle
   ghc-options:       -Wall
-  build-depends:     base
+  build-depends:     base >= 4.7 && < 5
                    , hmatrix
                    , random-fu
                    , random-fu-multivariate
