@@ -1,4 +1,4 @@
-|name:                kalman
+name:                kalman
 version:             1.0.0.2
 synopsis:            Kalman and particle filters and smoothers
 description:         Linear, extended and unscented Kalman filters are provided, along
