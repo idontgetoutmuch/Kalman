@@ -1,14 +1,15 @@
 name:                kalman
-version:             0.1.0.3
-synopsis:            Kalman filters and smoothers
-description:         Linear and extended Kalman filters are provided, along
-                     with their corresponding smoothers.
+version:             1.0.0.0
+synopsis:            Kalman and particle filters and smoothers
+description:         Linear, extended and unscented Kalman filters are provided, along
+                     with their corresponding smoothers. Furthermore, a particle filter
+                     and smoother is provided.
 homepage:            https://github.com/fpco/kalman
 license:             MIT
 license-file:        LICENSE
 author:              Dominic Steinitz, Jacob West
 maintainer:          dominic@steinitz.org
-copyright:           (c) 2016 FP Complete Corporation
+copyright:           Dominic Steinitz, Jacob West
 category:            Math
 build-type:          Simple
 cabal-version:       >=1.10
