@@ -284,6 +284,7 @@ module Numeric.Kalman
 import GHC.TypeLits
 import Numeric.LinearAlgebra.Static
 import Data.Maybe ( fromJust )
+import Prelude hiding ((<>))
 
 -- | Given our system model and our previous estimate of the system state,
 -- we generate a prediction of the current system state by taking the

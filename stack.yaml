@@ -1,8 +1,4 @@
-resolver: lts-6.9
-
-packages:
-- '.'
-- './../random-fu-multivariate'
-
-docker:
-  enable: true
+resolver: lts-12.11
+extra-deps:
+- git: git@github.com:idontgetoutmuch/random-fu-multivariate.git
+  commit: c28715921b42e9631c5b72b8716b330e89edd145
