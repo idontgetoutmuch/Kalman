@@ -13,8 +13,8 @@ copyright:           Dominic Steinitz, Jacob West
 category:            Math
 build-type:          Simple
 cabal-version:       >=1.10
-extra-source-files:  README.md, diagrams/*.png, diagrams/*.svg
-extra-doc-files:     diagrams/*.png, diagrams/*.svg
+extra-source-files:  README.md, diagrams/*.png
+extra-doc-files:     diagrams/*.png
 
 source-repository head
   type:     git
